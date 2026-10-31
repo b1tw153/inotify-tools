@@ -1412,18 +1412,42 @@ int inotifytools_watch_files(char const* filenames[], int events) {
 }
 
 /**
+ * Compute the time left until a deadline on CLOCK_MONOTONIC.
+ *
+ * @param deadline the deadline.
+ * @param remaining receives the time left.
+ *
+ * @return true if the deadline has passed, false otherwise.
+ */
+static bool deadline_passed(const struct timespec* deadline,
+			    struct timeval* remaining) {
+	struct timespec now;
+	clock_gettime(CLOCK_MONOTONIC, &now);
+	remaining->tv_sec = deadline->tv_sec - now.tv_sec;
+	remaining->tv_usec = (deadline->tv_nsec - now.tv_nsec) / 1000;
+	if (remaining->tv_usec < 0) {
+		remaining->tv_sec--;
+		remaining->tv_usec += 1000000;
+	}
+	return remaining->tv_sec < 0;
+}
+
+/**
  * Get the next inotify event to occur.
  *
  * inotifytools_initialize() must be called before this function can
  * be used.
  *
  * @param timeout maximum amount of time, in seconds, to wait for an event.
- *                If @a timeout is non-negative, the function is non-blocking.
- *                If @a timeout is negative, the function will block until an
- *                event occurs.
+ *                If @a timeout is positive, the function waits at most that
+ *                long for the whole call.  Filtered events do not extend the
+ *                wait.
+ *                If @a timeout is zero or negative, the function will block
+ *                until an event occurs.
  *
  * @return pointer to an inotify event, or NULL if function timed out before
- *         an event occurred.  The event is located in static storage and it
+ *         an event occurred.  After a timeout, inotifytools_error() is 0.
+ *         The event is located in static storage and it
  *         may be overwritten in subsequent calls; do not call free() on it,
  *         and make a copy if you want to keep it.
  *
@@ -1453,7 +1477,10 @@ struct inotify_event* inotifytools_next_event(long int timeout) {
  * be used.
  *
  * @param timeout maximum amount of time, in seconds, to wait for an event.
- *                If @a timeout is non-negative, the function is non-blocking.
+ *                If @a timeout is positive, the function waits at most that
+ *                long for the whole call.  Filtered events do not extend the
+ *                wait.
+ *                If @a timeout is zero, the function does not block.
  *                If @a timeout is negative, the function will block until an
  *                event occurs.
  *
@@ -1469,7 +1496,8 @@ struct inotify_event* inotifytools_next_event(long int timeout) {
  *                   May not be larger than 4096.
  *
  * @return pointer to an inotify event, or NULL if function timed out before
- *         an event occurred or @a num_events < 1.  The event is located in
+ *         an event occurred or @a num_events < 1.  After a timeout,
+ *         inotifytools_error() is 0.  The event is located in
  *         static storage and it may be overwritten in subsequent calls; do not
  *         call free() on it, and make a copy if you want to keep it.
  *         When @a num_events is greater than 1, this will return a pointer to
@@ -1515,7 +1543,8 @@ struct inotify_event* inotifytools_next_events(long int timeout,
 
 	// The timeout bounds the whole call, including retries after
 	// filtered events.  Use a monotonic clock so it ignores clock changes.
-	struct timespec deadline;
+	// Set it once, before setjmp.  Do not modify it after setjmp.
+	struct timespec deadline = {0, 0};
 	if (timeout > 0) {
 		clock_gettime(CLOCK_MONOTONIC, &deadline);
 		deadline.tv_sec += timeout;
@@ -1530,15 +1559,7 @@ struct inotify_event* inotifytools_next_events(long int timeout,
 	// Events not yet returned stay in the buffer for the next call.
 	struct timeval read_timeout = {0, 0};
 	if (timeout > 0) {
-		struct timespec now;
-		clock_gettime(CLOCK_MONOTONIC, &now);
-		read_timeout.tv_sec = deadline.tv_sec - now.tv_sec;
-		read_timeout.tv_usec = (deadline.tv_nsec - now.tv_nsec) / 1000;
-		if (read_timeout.tv_usec < 0) {
-			read_timeout.tv_sec--;
-			read_timeout.tv_usec += 1000000;
-		}
-		if (read_timeout.tv_sec < 0) {
+		if (deadline_passed(&deadline, &read_timeout)) {
 			return NULL;
 		}
 	}
