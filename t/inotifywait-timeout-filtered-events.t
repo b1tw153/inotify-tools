@@ -150,17 +150,15 @@ run_suite() {
         case_exit2 gen_spaced $period --exclude noise
     '
 
-    if [ "$label" = inotify ]; then
-        test_expect_success TIMING "$label: includei filter, spaced events, exit 2 on time" '
-            test_when_finished noise_stop &&
-            case_exit2 gen_spaced $period --includei MATCH
-        '
+    test_expect_success TIMING "$label: includei filter, spaced events, exit 2 on time" '
+        test_when_finished noise_stop &&
+        case_exit2 gen_spaced $period --includei MATCH
+    '
 
-        test_expect_success TIMING "$label: excludei filter, spaced events, exit 2 on time" '
-            test_when_finished noise_stop &&
-            case_exit2 gen_spaced $period --excludei NOISE
-        '
-    fi
+    test_expect_success TIMING "$label: excludei filter, spaced events, exit 2 on time" '
+        test_when_finished noise_stop &&
+        case_exit2 gen_spaced $period --excludei NOISE
+    '
 
     test_expect_success TIMING "$label: continuous filtered events, exit 2 on time" '
         test_when_finished noise_stop &&
