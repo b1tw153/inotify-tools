@@ -38,7 +38,7 @@ pub(crate) const EMPTY: *const c_char = b"\0".as_ptr() as *const c_char;
 
 /// The deadline for a call that starts now and waits `timeout` seconds.
 /// `None` means block, for a negative `timeout`.
-fn deadline_after(timeout: c_long) -> Option<Instant> {
+pub fn deadline_after(timeout: c_long) -> Option<Instant> {
     if timeout < 0 {
         return None;
     }
@@ -1367,6 +1367,7 @@ impl Inotifytools {
 
     /// Get the next event, waiting up to `timeout` seconds (0 or negative:
     /// block).  `None` on timeout or error (see [`Inotifytools::error`]).
+    /// Events skipped by the filters don't extend the timeout.
     pub fn next_event(&mut self, timeout: c_long) -> Option<Event> {
         let timeout = if timeout == 0 { -1 } else { timeout };
         self.next_events(timeout, 1)
@@ -1383,7 +1384,9 @@ impl Inotifytools {
     }
 
     /// Get the next event, waiting until roughly `num_events` events are
-    /// available.  `timeout` in seconds; negative blocks.
+    /// available.  `timeout` in seconds; negative blocks.  Events skipped by
+    /// the filters don't extend the timeout.  A zero `timeout` is a
+    /// non-blocking check.
     pub fn next_events(&mut self, timeout: c_long, num_events: c_int) -> Option<Event> {
         if self.next_events_raw(timeout, num_events) {
             Some(self.current_event())
@@ -1415,15 +1418,9 @@ impl Inotifytools {
             return false;
         }
 
-        let mut skipped = false;
+        // True once this call has read from the kernel.
+        let mut polled = false;
         loop {
-            // The previous event was skipped.  Give up once the deadline has
-            // passed instead of waiting for another event.
-            if skipped && deadline.map_or(false, |d| Instant::now() >= d) {
-                return false;
-            }
-            skipped = true;
-
             #[allow(unused_mut)]
             let mut event_pid: pid_t = 0;
             self.error = 0;
@@ -1454,6 +1451,14 @@ impl Inotifytools {
             }
 
             if !buffered {
+                // The buffer is drained.  Give up once this call has read the
+                // queue and the deadline has passed.  Buffered events are
+                // always scanned first, and every call reads at least once.
+                if polled && deadline.map_or(false, |d| Instant::now() >= d) {
+                    return false;
+                }
+                polled = true;
+
                 let left = deadline.map(|d| d.saturating_duration_since(Instant::now()));
                 let ts = libc::timespec {
                     tv_sec: left.map_or(0, |l| l.as_secs()) as _,

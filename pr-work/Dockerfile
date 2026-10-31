@@ -12,7 +12,7 @@ FROM debian:bookworm-slim
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates cargo g++ gcc git inotify-tools libc6-dev make procps \
-        rustc shellcheck \
+        rustc rustfmt shellcheck \
     && rm -rf /var/lib/apt/lists/*
 
 ENV CARGO_HOME=/tmp/cargo HOME=/tmp

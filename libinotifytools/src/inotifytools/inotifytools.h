@@ -515,7 +515,8 @@ int inotifytools_ignore_events_by_inverted_regex( char const *pattern, int flags
  * be used.
  *
  * @param timeout maximum amount of time, in seconds, to wait for an event.
- *                If @a timeout is non-negative, the function is non-blocking.
+ *                If @a timeout is zero, the function blocks until an event
+ *                occurs.
  *                If @a timeout is negative, the function will block until an
  *                event occurs.
  *
@@ -545,7 +546,8 @@ struct inotify_event * inotifytools_next_event( long int timeout );
  * be used.
  *
  * @param timeout maximum amount of time, in seconds, to wait for an event.
- *                If @a timeout is non-negative, the function is non-blocking.
+ *                If @a timeout is zero, the function checks once for a queued
+ *                event and does not block.
  *                If @a timeout is negative, the function will block until an
  *                event occurs.
  *

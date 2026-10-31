@@ -3,12 +3,13 @@
 mod common;
 
 use std::ffi::CString;
-use std::time::{Duration, Instant};
 
 use common::*;
 use inotifytools::cio::{self, cstring, errno, strerror};
 use inotifytools::consts::*;
-use inotifytools::{cat, ceprint, cprint, Event, Inotifytools, WatchScope, MAX_STRLEN};
+use inotifytools::{
+    cat, ceprint, cprint, deadline_after, Event, Inotifytools, WatchScope, MAX_STRLEN,
+};
 use libc::{c_int, c_long};
 
 #[derive(Default)]
@@ -302,13 +303,9 @@ fn real_main() -> i32 {
     let mut moves = MoveTracker::default();
     let has_include = o.filters.has_include();
 
-    // Only appropriate events restart the timeout.  Filtered events don't.
-    let new_deadline = || {
-        if o.timeout == BLOCKING_TIMEOUT {
-            return None;
-        }
-        Instant::now().checked_add(Duration::from_secs(o.timeout as u64))
-    };
+    // A zero timeout means no deadline.
+    let new_deadline =
+        || deadline_after(if o.timeout == BLOCKING_TIMEOUT { -1 } else { o.timeout });
     let mut deadline = new_deadline();
 
     let last_event = loop {
@@ -326,6 +323,8 @@ fn real_main() -> i32 {
         // With an include filter, directory events are not shown.
         let hidden = has_include && event.mask as i32 & IN_ISDIR != 0;
         if (event.mask as i32 & orig_events) != 0 && !hidden {
+            // Only appropriate events restart the timeout.  Filtered events
+            // don't.
             deadline = new_deadline();
             if o.quiet < 2 {
                 output_event(&mut lib, &o, &event);
