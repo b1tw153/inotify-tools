@@ -1434,8 +1434,9 @@ int inotifytools_watch_files(char const* filenames[], int events) {
  *
  * @note If the function inotifytools_ignore_events_by_regex() has been called
  *       with a non-NULL parameter, this function will not return on events
- *       which match the regular expression passed to that function.  However,
- *       the @a timeout period begins again each time a matching event occurs.
+ *       which match the regular expression passed to that function.  Such
+ *       events do not restart the @a timeout period.  The @a timeout bounds the
+ *       whole call, and the next call starts a new period.
  */
 struct inotify_event* inotifytools_next_event(long int timeout) {
 	if (!timeout) {
@@ -1490,8 +1491,9 @@ struct inotify_event* inotifytools_next_event(long int timeout) {
  *
  * @note If the function inotifytools_ignore_events_by_regex() has been called
  *       with a non-NULL parameter, this function will not return on events
- *       which match the regular expression passed to that function.  However,
- *       the @a timeout period begins again each time a matching event occurs.
+ *       which match the regular expression passed to that function.  Such
+ *       events do not restart the @a timeout period.  The @a timeout bounds the
+ *       whole call, and the next call starts a new period.
  */
 struct inotify_event* inotifytools_next_events(long int timeout,
 					       int num_events) {
@@ -1511,10 +1513,35 @@ struct inotify_event* inotifytools_next_events(long int timeout,
 	static struct nstring match_name;
 	static char match_name_string[MAX_STRLEN + 1];
 
+	// The timeout bounds the whole call, including retries after
+	// filtered events.  Use a monotonic clock so it ignores clock changes.
+	struct timespec deadline;
+	if (timeout > 0) {
+		clock_gettime(CLOCK_MONOTONIC, &deadline);
+		deadline.tv_sec += timeout;
+	}
+
 	setjmp(jmp);
 
 	pid_t event_pid = 0;
 	error = 0;
+
+	// A filtered event restarts here.  Stop when the deadline has passed.
+	// Events not yet returned stay in the buffer for the next call.
+	struct timeval read_timeout = {0, 0};
+	if (timeout > 0) {
+		struct timespec now;
+		clock_gettime(CLOCK_MONOTONIC, &now);
+		read_timeout.tv_sec = deadline.tv_sec - now.tv_sec;
+		read_timeout.tv_usec = (deadline.tv_nsec - now.tv_nsec) / 1000;
+		if (read_timeout.tv_usec < 0) {
+			read_timeout.tv_sec--;
+			read_timeout.tv_usec += 1000000;
+		}
+		if (read_timeout.tv_sec < 0) {
+			return NULL;
+		}
+	}
 
 	// first_byte is index into event buffer
 	if (first_byte != 0 &&
@@ -1535,7 +1562,7 @@ struct inotify_event* inotifytools_next_events(long int timeout,
 			// how much of the event do we have?
 			bytes = (char*)&event[0] + bytes - (char*)ret;
 			memcpy(&event[0], ret, bytes);
-			return inotifytools_next_events(timeout, num_events);
+			longjmp(jmp, 0);
 		}
 		this_bytes = 0;
 		goto more_events;
@@ -1550,10 +1577,7 @@ struct inotify_event* inotifytools_next_events(long int timeout,
 	static int rc;
 	static fd_set read_fds;
 
-	static struct timeval read_timeout;
-	read_timeout.tv_sec = timeout;
-	read_timeout.tv_usec = 0;
-	static struct timeval* read_timeout_ptr;
+	struct timeval* read_timeout_ptr;
 	read_timeout_ptr = (timeout < 0 ? NULL : &read_timeout);
 
 	FD_ZERO(&read_fds);
