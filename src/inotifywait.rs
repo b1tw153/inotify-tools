@@ -3,6 +3,7 @@
 mod common;
 
 use std::ffi::CString;
+use std::time::{Duration, Instant};
 
 use common::*;
 use inotifytools::cio::{self, cstring, errno, strerror};
@@ -301,8 +302,17 @@ fn real_main() -> i32 {
     let mut moves = MoveTracker::default();
     let has_include = o.filters.has_include();
 
+    // Only appropriate events restart the timeout.  Filtered events don't.
+    let new_deadline = || {
+        if o.timeout == BLOCKING_TIMEOUT {
+            return None;
+        }
+        Instant::now().checked_add(Duration::from_secs(o.timeout as u64))
+    };
+    let mut deadline = new_deadline();
+
     let last_event = loop {
-        let event = match lib.next_event(o.timeout) {
+        let event = match lib.next_event_until(deadline) {
             Some(v) => v,
             None => {
                 if lib.error() == 0 {
@@ -313,9 +323,11 @@ fn real_main() -> i32 {
             }
         };
 
-        if o.quiet < 2 && (event.mask as i32 & orig_events) != 0 {
-            // With an include filter, directory events are not shown.
-            if !has_include || event.mask as i32 & IN_ISDIR == 0 {
+        // With an include filter, directory events are not shown.
+        let hidden = has_include && event.mask as i32 & IN_ISDIR != 0;
+        if (event.mask as i32 & orig_events) != 0 && !hidden {
+            deadline = new_deadline();
+            if o.quiet < 2 {
                 output_event(&mut lib, &o, &event);
             }
         }

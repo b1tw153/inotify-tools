@@ -531,8 +531,10 @@ int inotifytools_ignore_events_by_inverted_regex( char const *pattern, int flags
  *
  * @note If the function inotifytools_ignore_events_by_regex() has been called
  *       with a non-NULL parameter, this function will not return on events
- *       which match the regular expression passed to that function.  However,
- *       the @a timeout period begins again each time a matching event occurs.
+ *       which match the regular expression passed to that function.  Those
+ *       events do not restart the @a timeout period.  The function returns
+ *       NULL once @a timeout seconds have passed since the call began, unless
+ *       an event that passes the filter is available first.
  */
 struct inotify_event * inotifytools_next_event( long int timeout );
 
@@ -581,8 +583,10 @@ struct inotify_event * inotifytools_next_event( long int timeout );
  *
  * @note If the function inotifytools_ignore_events_by_regex() has been called
  *       with a non-NULL parameter, this function will not return on events
- *       which match the regular expression passed to that function.  However,
- *       the @a timeout period begins again each time a matching event occurs.
+ *       which match the regular expression passed to that function.  Those
+ *       events do not restart the @a timeout period.  The function returns
+ *       NULL once @a timeout seconds have passed since the call began, unless
+ *       an event that passes the filter is available first.
  */
 struct inotify_event * inotifytools_next_events( long int timeout, int num_events );
 

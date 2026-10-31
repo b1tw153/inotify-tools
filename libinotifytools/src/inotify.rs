@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::ffi::{CStr, CString};
 use std::mem;
 use std::ptr;
+use std::time::{Duration, Instant};
 
 use libc::{
     c_char, c_int, c_long, c_uint, pid_t, EACCES, EINVAL, ELOOP, EMSGSIZE, ENOENT, ENOTDIR,
@@ -34,6 +35,15 @@ const QUEUE_SIZE_PATH: &[u8] = b"/proc/sys/fs/inotify/max_queued_watches\0";
 const INSTANCES_PATH: &[u8] = b"/proc/sys/fs/inotify/max_user_instances\0";
 
 pub(crate) const EMPTY: *const c_char = b"\0".as_ptr() as *const c_char;
+
+/// The deadline for a call that starts now and waits `timeout` seconds.
+/// `None` means block, for a negative `timeout`.
+fn deadline_after(timeout: c_long) -> Option<Instant> {
+    if timeout < 0 {
+        return None;
+    }
+    Instant::now().checked_add(Duration::from_secs(timeout as u64))
+}
 
 #[cfg(target_os = "linux")]
 type FidMap = BTreeMap<FidKey, u64>;
@@ -1362,6 +1372,16 @@ impl Inotifytools {
         self.next_events(timeout, 1)
     }
 
+    /// Get the next event, waiting until `deadline` (`None`: block).  Events
+    /// skipped by the filters do not extend the deadline.
+    pub fn next_event_until(&mut self, deadline: Option<Instant>) -> Option<Event> {
+        if self.next_events_until(deadline, 1) {
+            Some(self.current_event())
+        } else {
+            None
+        }
+    }
+
     /// Get the next event, waiting until roughly `num_events` events are
     /// available.  `timeout` in seconds; negative blocks.
     pub fn next_events(&mut self, timeout: c_long, num_events: c_int) -> Option<Event> {
@@ -1374,6 +1394,16 @@ impl Inotifytools {
 
     /// Advance to the next event; on success it is at `self.ret_off`.
     pub(crate) fn next_events_raw(&mut self, timeout: c_long, num_events: c_int) -> bool {
+        self.next_events_until(deadline_after(timeout), num_events)
+    }
+
+    /// Like [`Inotifytools::next_events_raw`], but takes a deadline instead
+    /// of a timeout.  `None` blocks.
+    pub(crate) fn next_events_until(
+        &mut self,
+        deadline: Option<Instant>,
+        num_events: c_int,
+    ) -> bool {
         self.assert_init();
         niceassert!(
             num_events <= MAX_EVENTS as c_int,
@@ -1385,7 +1415,15 @@ impl Inotifytools {
             return false;
         }
 
+        let mut skipped = false;
         loop {
+            // The previous event was skipped.  Give up once the deadline has
+            // passed instead of waiting for another event.
+            if skipped && deadline.map_or(false, |d| Instant::now() >= d) {
+                return false;
+            }
+            skipped = true;
+
             #[allow(unused_mut)]
             let mut event_pid: pid_t = 0;
             self.error = 0;
@@ -1416,9 +1454,13 @@ impl Inotifytools {
             }
 
             if !buffered {
-                let ts = libc::timespec { tv_sec: timeout as _, tv_nsec: 0 };
+                let left = deadline.map(|d| d.saturating_duration_since(Instant::now()));
+                let ts = libc::timespec {
+                    tv_sec: left.map_or(0, |l| l.as_secs()) as _,
+                    tv_nsec: left.map_or(0, |l| l.subsec_nanos()) as _,
+                };
                 let mut pfd = libc::pollfd { fd: self.fd, events: libc::POLLIN, revents: 0 };
-                let tsp = if timeout < 0 { ptr::null() } else { &ts as *const libc::timespec };
+                let tsp = if left.is_none() { ptr::null() } else { &ts as *const libc::timespec };
                 let rc = unsafe { libc::ppoll(&mut pfd, 1, tsp, ptr::null()) };
                 if rc < 0 {
                     self.error = errno();
