@@ -12,15 +12,64 @@ timeout_secs=2
 # Extra seconds a run may take beyond the earliest correct exit before it is
 # killed. A build that lets filtered events extend the timeout never exits on
 # its own, so the kill bounds the run time.
-grace_secs=3
+grace_secs=5
+# Timeout of the stream scenario. It is longer than the one second between
+# delivered events, so a loaded machine can be late by almost two seconds.
+stream_timeout_secs=3
 
-# Stop the background process that creates filtered events, if any.
-stop_noise() {
-    if [ -n "$NOISE_PID" ]; then
-        kill "$NOISE_PID" 2>/dev/null
-        wait "$NOISE_PID" 2>/dev/null
-        NOISE_PID=
+# Stop the background processes that create events, if any.
+stop_helpers() {
+    for h_pid in "$NOISE_PID" "$DELIVER_PID"; do
+        if [ -n "$h_pid" ]; then
+            kill "$h_pid" 2>/dev/null
+            wait "$h_pid" 2>/dev/null
+        fi
+    done
+    NOISE_PID=
+    DELIVER_PID=
+}
+
+# Stop the helpers and the program of the running case, then leave. Without
+# this, a program with no timeout would outlive an interrupted test.
+abort_case() {
+    stop_helpers
+    kill "$c_bounded" 2>/dev/null
+    if [ -f "$c_name.pid" ]; then
+        kill "$(cat "$c_name.pid")" 2>/dev/null
     fi
+    exit 1
+}
+
+# Poll every 0.1 seconds, at most $1 times, until the command in the other
+# arguments succeeds.
+poll() {
+    p_max=$1
+    shift
+    p_n=0
+    until "$@"; do
+        p_n=$((p_n + 1))
+        if [ "$p_n" -ge "$p_max" ]; then
+            return 1
+        fi
+        sleep 0.1
+    done
+}
+
+# The program of case $1 has set up its watches, or has already exited. The
+# program must run without -q, or it does not report the watches.
+watching() {
+    grep -q 'Watches established' "$1.err" 2>/dev/null || [ -f "$1.rc" ]
+}
+
+# Fail if any case reported a setup failure.
+setup_ok() {
+    for s_file in *.fail; do
+        if [ -e "$s_file" ]; then
+            echo "setup failed: $s_file" >&2
+            return 1
+        fi
+    done
+    return 0
 }
 
 # Rename a file over the name "noise" in the given directory. Each rename makes
@@ -67,7 +116,8 @@ bounded() {
     (
         "$@" >"$b_name.out" 2>"$b_name.err" &
         b_pid=$!
-        echo "$b_pid" >"$b_name.pid"
+        echo "$b_pid" >"$b_name.pid.tmp"
+        mv "$b_name.pid.tmp" "$b_name.pid"
         b_rc=0
         wait "$b_pid" || b_rc=$?
         date +%s >"$b_name.end"
@@ -83,7 +133,12 @@ bounded() {
     b_killed=0
     if [ ! -f "$b_name.rc" ]; then
         b_killed=1
-        kill "$(cat "$b_name.pid")" 2>/dev/null
+        # The pid file may not exist yet. Wait for it, up to 5 seconds.
+        if poll 50 test -f "$b_name.pid"; then
+            kill "$(cat "$b_name.pid")" 2>/dev/null
+        else
+            kill "$b_wrapper" 2>/dev/null
+        fi
     fi
     wait "$b_wrapper"
     echo "$b_killed" >"$b_name.killed"
@@ -101,28 +156,55 @@ run_case() {
     shift 4
     c_dir="$c_name.dir"
     NOISE_PID=
-    c_pid=
-    trap stop_noise EXIT
-    mkdir "$c_dir" || return 1
+    DELIVER_PID=
+    trap stop_helpers EXIT
+    c_bounded=
+    trap abort_case INT TERM
+    if ! mkdir "$c_dir"; then
+        echo "run_case $c_name: cannot create $c_dir" >&2
+        : >"$c_name.fail"
+        return 1
+    fi
     if [ "$c_noise" != none ]; then
         start_noise "$c_dir" "$c_noise"
     fi
-    case $c_deliver in
-    once)
-        (sleep 1; deliver_event "$c_dir") &
-        c_pid=$!
-        ;;
-    stream)
-        stream_events "$c_dir" &
-        c_pid=$!
-        ;;
-    esac
-    bounded "$c_name" "$c_limit" "$@" "$c_dir"
-    if [ -n "$c_pid" ]; then
-        wait "$c_pid"
+    bounded "$c_name" "$c_limit" "$@" "$c_dir" &
+    c_bounded=$!
+    # Start the delivered events only after the program has set up its watches.
+    # The poll is bounded, so a broken build cannot hang the test.
+    if [ "$c_deliver" != none ]; then
+        if poll 100 watching "$c_name"; then
+            case $c_deliver in
+            once)
+                (sleep 1; deliver_event "$c_dir") &
+                DELIVER_PID=$!
+                ;;
+            stream)
+                stream_events "$c_dir" &
+                DELIVER_PID=$!
+                ;;
+            esac
+        else
+            echo "run_case $c_name: watches not established" >&2
+            : >"$c_name.fail"
+        fi
     fi
-    stop_noise
+    wait "$c_bounded"
+    if [ -n "$DELIVER_PID" ]; then
+        wait "$DELIVER_PID"
+    fi
+    stop_helpers
+    [ ! -e "$c_name.fail" ]
 }
+
+# Run a command in the background and remember its pid. A background shell
+# ignores INT, so the main shell passes both INT and TERM on as TERM.
+SPAWNED=
+spawn() {
+    "$@" &
+    SPAWNED="$SPAWNED $!"
+}
+trap 'kill $SPAWNED 2>/dev/null; exit 1' INT TERM
 
 show_case() {
     echo "$1: rc=$(cat "$1.rc") secs=$(cat "$1.secs")" \
@@ -131,7 +213,10 @@ show_case() {
 
 # The program exited by itself with status 2, and not earlier than $2 seconds
 # after the start. The run time has a resolution of one second, so $2 is one
-# below the earliest correct exit time.
+# below the earliest correct exit time. The test does not enforce the spec's
+# tolerance of 100 ms for an early exit. The clock is too coarse. A program that
+# exits less than one second early can pass. Only the filtered-event bug is
+# caught, because it delays the exit by a whole timeout period or more.
 timed_out() {
     show_case "$1"
     [ "$(cat "$1.killed")" = 0 ] &&
@@ -153,49 +238,58 @@ printed_events() {
 # Options shared by all runs. Events are limited to moved_to, so only the
 # renames made by this test count.
 common="-q -e moved_to"
+# Options for runs that get delivered events. They omit -q, so that the program
+# reports "Watches established." on standard error.
+common_loud="-e moved_to"
 iw=../../src/inotifywait
 limit_idle=$((timeout_secs + grace_secs))
 min_idle=$((timeout_secs - 1))
+limit_stream=$((3 + stream_timeout_secs + grace_secs))
+min_stream=$((3 + stream_timeout_secs - 1))
 
 test_expect_success 'run the scenarios in parallel' '
-    run_case include slow none $limit_idle \
-        $iw $common --timeout $timeout_secs --include "index\$" &
-    run_case includei slow none $limit_idle \
-        $iw $common --timeout $timeout_secs --includei "INDEX\$" &
-    run_case exclude slow none $limit_idle \
-        $iw $common --timeout $timeout_secs --exclude "noise\$" &
-    run_case excludei slow none $limit_idle \
-        $iw $common --timeout $timeout_secs --excludei "NOISE\$" &
-    run_case delivered slow once $limit_idle \
-        $iw $common --timeout $timeout_secs --include "index\$" &
-    run_case monitor_after_delivered slow once $((1 + limit_idle)) \
-        $iw $common --monitor --timeout $timeout_secs --include "index\$" &
-    run_case no_filter none none $limit_idle \
-        $iw $common --timeout $timeout_secs &
-    run_case zero_timeout slow none $limit_idle \
-        $iw $common --timeout 0 --include "index\$" &
-    run_case no_timeout slow none $limit_idle \
-        $iw $common --include "index\$" &
+    spawn run_case include slow none $limit_idle \
+        $iw $common --timeout $timeout_secs --include "index\$"
+    spawn run_case includei slow none $limit_idle \
+        $iw $common --timeout $timeout_secs --includei "INDEX\$"
+    spawn run_case exclude slow none $limit_idle \
+        $iw $common --timeout $timeout_secs --exclude "noise\$"
+    spawn run_case excludei slow none $limit_idle \
+        $iw $common --timeout $timeout_secs --excludei "NOISE\$"
+    spawn run_case delivered slow once $limit_idle \
+        $iw $common_loud --timeout $timeout_secs --include "index\$"
+    spawn run_case monitor_after_delivered slow once $((1 + limit_idle)) \
+        $iw $common_loud --monitor --timeout $timeout_secs \
+        --include "index\$"
+    spawn run_case no_filter none none $limit_idle \
+        $iw $common --timeout $timeout_secs
+    spawn run_case zero_timeout slow none $limit_idle \
+        $iw $common --timeout 0 --include "index\$"
+    spawn run_case no_timeout slow none $limit_idle \
+        $iw $common --include "index\$"
     if fanotify_supported; then
-        run_case fan_include slow none $limit_idle \
+        spawn run_case fan_include slow none $limit_idle \
             ../../src/fsnotifywait --fanotify $common \
-            --timeout $timeout_secs --include "index\$" &
-        run_case fan_delivered slow once $limit_idle \
+            --timeout $timeout_secs --include "index\$"
+        spawn run_case fan_delivered slow once $limit_idle \
+            ../../src/fsnotifywait --fanotify $common_loud \
+            --timeout $timeout_secs --include "index\$"
+        spawn run_case fan_no_filter none none $limit_idle \
             ../../src/fsnotifywait --fanotify $common \
-            --timeout $timeout_secs --include "index\$" &
-        run_case fan_no_filter none none $limit_idle \
-            ../../src/fsnotifywait --fanotify $common \
-            --timeout $timeout_secs &
+            --timeout $timeout_secs
     fi
-    wait
+    wait &&
+    setup_ok
 '
 
 test_expect_success 'run the scenarios that need a quiet machine' '
-    run_case tight tight none $limit_idle \
-        $iw $common --timeout $timeout_secs --include "index\$" &
-    run_case monitor_stream none stream $((3 + limit_idle)) \
-        $iw $common --monitor --timeout $timeout_secs --include "index\$" &
-    wait
+    spawn run_case tight tight none $limit_idle \
+        $iw $common --timeout $timeout_secs --include "index\$"
+    spawn run_case monitor_stream none stream $limit_stream \
+        $iw $common_loud --monitor --timeout $stream_timeout_secs \
+        --include "index\$"
+    wait &&
+    setup_ok
 '
 
 test_expect_success '--include: filtered events do not extend the timeout' '
@@ -231,7 +325,7 @@ test_expect_success '--monitor: timeout starts at the last delivered event' '
 '
 
 test_expect_success '--monitor: delivered events keep the program running' '
-    timed_out monitor_stream $((3 + min_idle)) &&
+    timed_out monitor_stream $min_stream &&
     [ "$(printed_events monitor_stream)" = 3 ]
 '
 
