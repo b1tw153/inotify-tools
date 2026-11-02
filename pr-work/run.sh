@@ -8,6 +8,11 @@
 # The default command runs the reproduction against the built binary.
 # The container sees the sources through a tar stream, so it can't write to
 # the worktree. The pr-work directory is mounted read-only at /pr-work.
+#
+# Set AS_ROOT=1 to run as root with CAP_SYS_ADMIN, which fanotify needs. The
+# build then uses a tmpfs, because fanotify can't watch the container's
+# overlayfs. The container has no writable host mount, so root can't create
+# files on the host.
 
 set -eu
 
@@ -27,9 +32,15 @@ fi
 
 docker build -q -t "$IMAGE" "$PR_WORK" > /dev/null
 
+if [[ "${AS_ROOT:-0}" == 1 ]]; then
+    RUN_AS=(--cap-add SYS_ADMIN --tmpfs /build:exec -e TMPDIR=/build)
+else
+    RUN_AS=(--user "$(id -u):$(id -g)")
+fi
+
 if [[ "$REV" == WORKTREE ]]; then
     tar -C "$ROOT" --exclude=.git --exclude=pr-work -cf - .
 else
     git -C "$ROOT" archive "$REV"
-fi | docker run --rm -i --user "$(id -u):$(id -g)" \
+fi | docker run --rm -i "${RUN_AS[@]}" \
     -v "$PR_WORK:/pr-work:ro" "$IMAGE" /pr-work/container-run.sh "$@"
