@@ -80,9 +80,9 @@ int inotifytools_ignore_events_by_regex(char const* pattern, int flags);
 int inotifytools_ignore_events_by_inverted_regex(char const* pattern, int flags);
 ```
 
-- **R9.** The `timeout` argument bounds one whole call. A call returns `NULL`
-  with `inotifytools_error()` equal to 0 when `timeout` seconds pass with no
-  delivered event. Filtered events don't restart that time.
+- **R9.** A call returns `NULL` with `inotifytools_error()` equal to 0 when
+  `timeout` seconds pass with no delivered event. Filtered events don't restart
+  that time.
 - **R10.** A later call starts a new `timeout` period. Each call gets its full
   `timeout`.
 - **R11.** These documented `timeout` values keep their meaning:
