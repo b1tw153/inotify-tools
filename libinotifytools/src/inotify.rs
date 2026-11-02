@@ -38,6 +38,8 @@ pub(crate) const EMPTY: *const c_char = b"\0".as_ptr() as *const c_char;
 
 /// The deadline for a call that starts now and waits `timeout` seconds.
 /// `None` means block, for a negative `timeout`.
+/// It also returns `None` if the deadline overflows `Instant`, so a huge
+/// `timeout` blocks forever.
 pub fn deadline_after(timeout: c_long) -> Option<Instant> {
     if timeout < 0 {
         return None;
@@ -1402,6 +1404,10 @@ impl Inotifytools {
 
     /// Like [`Inotifytools::next_events_raw`], but takes a deadline instead
     /// of a timeout.  `None` blocks.
+    ///
+    /// Buffered events are scanned first.  The call then reads the kernel
+    /// queue at least once before it checks the deadline.  So a zero timeout
+    /// still returns a passing event that is queued behind filtered events.
     pub(crate) fn next_events_until(
         &mut self,
         deadline: Option<Instant>,
@@ -1451,9 +1457,8 @@ impl Inotifytools {
             }
 
             if !buffered {
-                // The buffer is drained.  Give up once this call has read the
-                // queue and the deadline has passed.  Buffered events are
-                // always scanned first, and every call reads at least once.
+                // The buffer is drained.  Give up only after one read and a
+                // passed deadline.
                 if polled && deadline.map_or(false, |d| Instant::now() >= d) {
                     return false;
                 }

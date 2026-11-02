@@ -303,7 +303,8 @@ fn real_main() -> i32 {
     let mut moves = MoveTracker::default();
     let has_include = o.filters.has_include();
 
-    // A zero timeout means no deadline.
+    // BLOCKING_TIMEOUT (0) maps to -1, so deadline_after() returns None and
+    // the wait has no deadline.
     let new_deadline =
         || deadline_after(if o.timeout == BLOCKING_TIMEOUT { -1 } else { o.timeout });
     let mut deadline = new_deadline();

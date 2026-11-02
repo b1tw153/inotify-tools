@@ -13,10 +13,17 @@ monitor mode, only appropriate events restart the period.
 # Tolerance: an exit up to 2 seconds after the timeout expires is accepted.
 late_ms=2000
 
-# Millisecond clock. Tests need GNU date %N and the timeout command.
+export LD_LIBRARY_PATH="../../libinotifytools/src/"
+
+# Millisecond clock. Tests need GNU date %N, the timeout command and a sleep
+# that accepts fractions.
 case $(date +%s%N 2>/dev/null) in
 '' | *[!0-9]*) ;;
-*) command -v timeout >/dev/null 2>&1 && test_set_prereq TIMING ;;
+*)
+    command -v timeout >/dev/null 2>&1 &&
+        sleep 0.01 >/dev/null 2>&1 &&
+        test_set_prereq TIMING
+    ;;
 esac
 
 now_ms() {
@@ -59,25 +66,14 @@ gen_continuous() {
     done
 }
 
-# Filtered events, then matching events from about 1 second on.
-gen_then_match() {
+# Filtered events, with matching events after about 1 second.
+# Argument: "repeat" keeps matching from then on. "once" matches one time.
+gen_match() {
+    mode=$1
     n=0
     while [ ! -e stop ]; do
         touch watched/noise
-        if [ $n -ge 5 ]; then
-            touch watched/match
-        fi
-        n=$((n + 1))
-        sleep 0.2
-    done
-}
-
-# Filtered events, with one matching event after about 1 second.
-gen_one_match() {
-    n=0
-    while [ ! -e stop ]; do
-        touch watched/noise
-        if [ $n -eq 5 ]; then
+        if [ "$n" -eq 5 ] || { [ "$mode" = repeat ] && [ "$n" -gt 5 ]; }; then
             touch watched/match
         fi
         n=$((n + 1))
@@ -100,7 +96,6 @@ gen_dirs() {
 run_timed() {
     period=$1
     shift
-    export LD_LIBRARY_PATH="../../libinotifytools/src/"
     t0=$(now_ms)
     timeout $((period + 4)) "$@" >out 2>err
     rc=$?
@@ -169,7 +164,7 @@ run_suite() {
         test_when_finished noise_stop &&
         rm -rf watched stop &&
         mkdir watched &&
-        noise_start gen_then_match &&
+        noise_start gen_match repeat &&
         run_timed $period ../../src/$backend --timeout $period --include match watched &&
         noise_stop &&
         test "$rc" -eq 0 &&
@@ -186,11 +181,13 @@ run_suite() {
         test_when_finished noise_stop &&
         rm -rf watched stop &&
         mkdir watched &&
-        noise_start gen_one_match &&
+        noise_start gen_match once &&
         run_timed $period ../../src/$backend --quiet --monitor --timeout $period --include match watched &&
         noise_stop &&
         test "$rc" -eq 2 &&
-        test "$elapsed_ms" -ge $(((period + 1) * 1000)) &&
+        # The match comes about 1 second in. Any exit later than the plain
+        # period shows that the match restarted the timeout.
+        test "$elapsed_ms" -ge $((period * 1000 + 500)) &&
         test "$elapsed_ms" -le $(((period + 1) * 1000 + late_ms))
     '
 
@@ -204,8 +201,8 @@ run_suite() {
         rm -rf watched stop &&
         mkdir watched &&
         noise_start gen_spaced &&
-        export LD_LIBRARY_PATH="../../libinotifytools/src/" &&
         timeout 3 ../../src/$backend --quiet --timeout 0 --include match watched >out 2>err
+        # No && above on purpose. This line must capture the exit status.
         rc=$?
         noise_stop &&
         test "$rc" -eq 124
