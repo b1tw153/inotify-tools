@@ -1376,7 +1376,8 @@ impl Inotifytools {
     }
 
     /// Get the next event, waiting until `deadline` (`None`: block).  Events
-    /// skipped by the filters do not extend the deadline.
+    /// skipped by the filters don't extend the deadline.  Use
+    /// [`deadline_after`] to build a deadline from a timeout.
     pub fn next_event_until(&mut self, deadline: Option<Instant>) -> Option<Event> {
         if self.next_events_until(deadline, 1) {
             Some(self.current_event())
@@ -1387,8 +1388,9 @@ impl Inotifytools {
 
     /// Get the next event, waiting until roughly `num_events` events are
     /// available.  `timeout` in seconds; negative blocks.  Events skipped by
-    /// the filters don't extend the timeout.  A zero `timeout` is a
-    /// non-blocking check.
+    /// the filters don't extend the timeout.  A zero `timeout` doesn't
+    /// block.  It reads the kernel queue once.  If that read holds only
+    /// filtered events, the call returns `None`.
     pub fn next_events(&mut self, timeout: c_long, num_events: c_int) -> Option<Event> {
         if self.next_events_raw(timeout, num_events) {
             Some(self.current_event())
@@ -1407,7 +1409,9 @@ impl Inotifytools {
     ///
     /// Buffered events are scanned first.  The call then reads the kernel
     /// queue at least once before it checks the deadline.  So a zero timeout
-    /// still returns a passing event that is queued behind filtered events.
+    /// returns a passing event queued behind filtered events, if one read
+    /// holds it.  If that read holds only filtered events, the call returns
+    /// false, and a later call returns the passing event.
     pub(crate) fn next_events_until(
         &mut self,
         deadline: Option<Instant>,
