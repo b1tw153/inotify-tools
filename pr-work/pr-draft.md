@@ -84,7 +84,7 @@ The rest of `make check` passes on this branch. `cargo fmt --check` is clean.
 
 The fanotify cases ran as root with `CAP_SYS_ADMIN` in the same container. All
 20 cases of the new test pass on this branch. On the commit that adds the test
-without the fix, 14 of 18 cases fail, 7 of them with fanotify. One case in
+without the fix, 14 of 18 cases fail, 6 of them with fanotify. One case in
 `fsnotifywait-subtree.t` fails in that container on both `master` and this
 branch. Filesystem watches aren't supported there, so the filesystem and mount
 tests skip.
