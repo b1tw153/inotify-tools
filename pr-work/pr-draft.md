@@ -4,8 +4,8 @@
 
 - Delete the `pr-work/` directory from the branch.
 - Consider squashing the branch into two commits, one for the test and one for
-  the fix. The branch has five commits after `e763f49`. The later three fix a
-  regression that the review found and address review notes.
+  the fix. The later commits fix a regression that a review found and address
+  review notes.
 - Review the C API change described under "Library API" in the body. It changes
   documented behavior of `inotifytools_next_event()` and
   `inotifytools_next_events()`.
