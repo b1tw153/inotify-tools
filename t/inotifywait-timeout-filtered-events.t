@@ -94,10 +94,10 @@ gen_dirs() {
 # Run a command under a guard. Sets rc and elapsed_ms.
 # Arguments: timeout period in seconds, then the command.
 run_timed() {
-    period=$1
+    p=$1
     shift
     t0=$(now_ms)
-    timeout $((period + 4)) "$@" >out 2>err
+    timeout $((p + 4)) "$@" >out 2>err
     rc=$?
     t1=$(now_ms)
     elapsed_ms=$((t1 - t0))
@@ -107,31 +107,40 @@ run_timed() {
 # Check for status 2, no earlier than the period and no later than the period
 # plus the tolerance.
 check_exit2_on_time() {
-    period=$1
+    p=$1
     test "$rc" -eq 2 || { echo "# expected exit 2, got $rc"; return 1; }
-    test "$elapsed_ms" -ge $((period * 1000)) ||
+    test "$elapsed_ms" -ge $((p * 1000)) ||
         { echo "# exited early"; return 1; }
-    test "$elapsed_ms" -le $((period * 1000 + late_ms)) ||
+    test "$elapsed_ms" -le $((p * 1000 + late_ms)) ||
         { echo "# exited late"; return 1; }
+}
+
+# Create a fresh watched directory and start a generator.
+# Arguments: the generator command, then its arguments.
+setup_watch() {
+    rm -rf watched stop &&
+        mkdir watched &&
+        noise_start "$@"
 }
 
 # Run one watch against a generator and require exit 2 on time.
 # Arguments: generator, period, then the tool options before the path.
 case_exit2() {
     gen=$1
-    period=$2
+    p=$2
     shift 2
-    rm -rf watched stop
-    mkdir watched
-    noise_start "$gen"
-    run_timed "$period" ../../src/$backend --quiet --timeout "$period" "$@" watched
+    setup_watch "$gen"
+    # $backend is unquoted on purpose, see run_suite.
+    run_timed "$p" ../../src/$backend --quiet --timeout "$p" "$@" watched
     noise_stop
-    check_exit2_on_time "$period"
+    check_exit2_on_time "$p"
 }
 
 run_suite() {
     label=$1
     shift
+    # $backend is left unquoted on purpose, so "fsnotifywait --fanotify"
+    # splits into a command and an option.
     backend="$*"
     period=2
 
@@ -162,9 +171,7 @@ run_suite() {
 
     test_expect_success TIMING "$label: matching event after filtered events, exit 0" '
         test_when_finished noise_stop &&
-        rm -rf watched stop &&
-        mkdir watched &&
-        noise_start gen_match repeat &&
+        setup_watch gen_match repeat &&
         run_timed $period ../../src/$backend --timeout $period --include match watched &&
         noise_stop &&
         test "$rc" -eq 0 &&
@@ -179,9 +186,7 @@ run_suite() {
 
     test_expect_success TIMING "$label: monitor mode, matching event restarts the timeout" '
         test_when_finished noise_stop &&
-        rm -rf watched stop &&
-        mkdir watched &&
-        noise_start gen_match once &&
+        setup_watch gen_match once &&
         run_timed $period ../../src/$backend --quiet --monitor --timeout $period --include match watched &&
         noise_stop &&
         test "$rc" -eq 2 &&
@@ -198,9 +203,7 @@ run_suite() {
 
     test_expect_success TIMING "$label: timeout 0 waits indefinitely despite filtered events" '
         test_when_finished noise_stop &&
-        rm -rf watched stop &&
-        mkdir watched &&
-        noise_start gen_spaced &&
+        setup_watch gen_spaced &&
         timeout 3 ../../src/$backend --quiet --timeout 0 --include match watched >out 2>err
         # No && above on purpose. This line must capture the exit status.
         rc=$?

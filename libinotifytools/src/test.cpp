@@ -352,7 +352,7 @@ static long elapsed_ms_since(struct timespec const* start) {
 		verify(inotifytools_ignore_events_by_regex("noise", 0, 0));  \
 	} while (0)
 
-// Case (a): a queued passing event is returned by a zero-timeout call, even
+// A queued passing event is returned by a zero-timeout call, even
 // when a filtered event is queued ahead of it.
 void next_events_zero_timeout_passing_after_filtered() {
 	ENTER
@@ -368,7 +368,7 @@ void next_events_zero_timeout_passing_after_filtered() {
 	EXIT
 }
 
-// Case (b): filtered events remaining buffered after the first call do not
+// Filtered events remaining buffered after the first call do not
 // hide the next passing event from a second zero-timeout call.
 void next_events_zero_timeout_consecutive_calls() {
 	ENTER
@@ -389,7 +389,7 @@ void next_events_zero_timeout_consecutive_calls() {
 	EXIT
 }
 
-// Case (c): zero timeout with only filtered events queued returns NULL
+// A zero timeout with only filtered events queued returns NULL
 // promptly.
 void next_events_zero_timeout_only_filtered() {
 	ENTER
@@ -424,7 +424,7 @@ void next_events_zero_timeout_nothing_queued() {
 	EXIT
 }
 
-// Case (d): timeout 1 with only filtered events queued returns NULL after
+// A timeout of 1 with only filtered events queued returns NULL after
 // about one second, neither early nor much late.
 void next_events_timeout_only_filtered() {
 	ENTER
@@ -444,7 +444,7 @@ void next_events_timeout_only_filtered() {
 	EXIT
 }
 
-// Same as (d) through inotifytools_next_event().
+// Same as the test above, through inotifytools_next_event().
 void next_event_timeout_only_filtered() {
 	ENTER
 	SETUP_NOISE_FILTER;
