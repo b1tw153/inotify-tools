@@ -20,6 +20,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <syslog.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <inotifytools/inotify.h>
@@ -31,6 +32,26 @@ extern int optind, opterr, optopt;
 #define MAX_STRLEN 4096
 
 // METHODS
+
+// Set the end of a timeout period of the given length, starting now.  The
+// monotonic clock keeps system clock changes from affecting the period.
+static void set_deadline(struct timespec* deadline, unsigned int timeout) {
+	clock_gettime(CLOCK_MONOTONIC, deadline);
+	deadline->tv_sec += timeout;
+}
+
+// Return the whole seconds left until the deadline, rounded up.  Return zero
+// or less if the deadline has passed.
+static long int seconds_until(const struct timespec* deadline) {
+	struct timespec now;
+	clock_gettime(CLOCK_MONOTONIC, &now);
+	long int seconds = deadline->tv_sec - now.tv_sec;
+	if (deadline->tv_nsec > now.tv_nsec) {
+		seconds++;
+	}
+	return seconds;
+}
+
 static bool parse_opts(int* argc,
 		       char*** argv,
 		       int* events,
@@ -377,8 +398,23 @@ int main(int argc, char** argv) {
 	struct inotify_event* event;
 	char* moved_from = 0;
 
+	// The timeout period starts now. Only an appropriate event restarts it.
+	// With -m -r, the program adds unrequested events to follow new
+	// directories. Those events return from inotifytools_next_event(). They
+	// must not restart the period.
+	struct timespec deadline;
+	set_deadline(&deadline, timeout);
+
 	do {
-		event = inotifytools_next_event(timeout);
+		long int seconds_left = BLOCKING_TIMEOUT;
+		if (timeout != BLOCKING_TIMEOUT) {
+			seconds_left = seconds_until(&deadline);
+			if (seconds_left <= 0) {
+				return EXIT_TIMEOUT;
+			}
+		}
+
+		event = inotifytools_next_event(seconds_left);
 		if (!event) {
 			if (!inotifytools_error()) {
 				return EXIT_TIMEOUT;
@@ -390,13 +426,21 @@ int main(int argc, char** argv) {
 			}
 		}
 
-		if (quiet < 2 && (event->mask & orig_events)) {
-			if (csv) {
-				output_event_csv(event);
-			} else if (format) {
-				inotifytools_printf(event, format);
-			} else {
-				inotifytools_printf(event, "%w %,e %f\n");
+		if (event->mask & orig_events) {
+			// An appropriate event starts a new timeout period.
+			// This holds when --quiet stops the program from
+			// printing the event.
+			set_deadline(&deadline, timeout);
+
+			if (quiet < 2) {
+				if (csv) {
+					output_event_csv(event);
+				} else if (format) {
+					inotifytools_printf(event, format);
+				} else {
+					inotifytools_printf(event,
+							    "%w %,e %f\n");
+				}
 			}
 		}
 

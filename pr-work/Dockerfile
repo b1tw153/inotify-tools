@@ -7,6 +7,7 @@ RUN apt-get update \
         autoconf \
         automake \
         bash \
+        clang-format \
         g++ \
         gcc \
         inotify-tools \
