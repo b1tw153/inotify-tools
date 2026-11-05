@@ -37,8 +37,22 @@ every 0.5 s. A guard kills the process at 8 s.
 
 The `cpp` result comes from the issue draft. The other three are new.
 
-**Decision:** The user kept `-m -r` out of scope for this PR on 2026-10-31. That
-was before the Rust fix covered it. Choose one:
+**Resolved 2026-11-04:** The user chose to port the Rust main-loop change.
+Commits a800fb4 (spec R19–R27), cc39667 (test) and 9623101 (fix in
+`src/inotifywait.cpp`) do this. The fixed build exits with status 2 after
+2.0 s in the case above.
+
+TODO for the next session:
+
+- Run `code-critic` on 9623101 and cc39667, and handle its findings.
+- Update `pr-draft.md`. Fold in the `-m -r` scope, the new cases and the
+  measurements.
+- Retire `issue-recursive-monitor-timeout.md`. The PR now covers that case.
+- Check the test gaps from `test-writer` in commit cc39667. The run times have
+  one-second resolution. The R23 case has no readiness signal. Fanotify covers
+  only R19.
+
+The options were:
 
 - **Extend the C++ fix (recommended).** Port the Rust main-loop change to
   `src/inotifywait.cpp`. This is the first outcome the issue draft proposes. The
