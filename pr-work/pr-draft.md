@@ -85,9 +85,12 @@ the include path in `AM_CPPFLAGS`.
 
 ### Limitations
 
-- `clock_gettime()` needs `-lrt` on glibc older than 2.17. This change doesn't
-  add it, because the bookworm build doesn't need it. I haven't tested an older
-  glibc, or the FreeBSD and Alpine CI builds.
+- The library and `inotifywait` now call `clock_gettime()`. On glibc 2.16 and
+  older, that function is in librt and needs `-lrt`. glibc 2.17 moved it into
+  libc in December 2012. This change doesn't add a `configure` check for it. If
+  you want to support those systems, `AC_SEARCH_LIBS([clock_gettime], [rt])` in
+  `configure.ac` adds `-lrt` only where libc lacks the function. I haven't
+  tested an older glibc, or the FreeBSD and Alpine CI builds.
 - `inotifywait -m -r` adds `create`, `moved_to` and `moved_from` to its watch
   mask so it can follow new directories. Those events still restart the timeout
   when the user didn't request them. No filter is involved, so I left this for a

@@ -249,8 +249,9 @@ already matches.
   Both builds give the same 14 warnings, all outside the changed code. This
   closes an earlier `implementer` open question.
 - **`-lrt` on old glibc.** `clock_gettime()` needs `-lrt` before glibc 2.17.
-  This is still deferred and untested. The Rust fix uses `std::time::Instant`
-  and has no such limit.
+  The user decided on 2026-11-05 to leave the check out and note it in the PR.
+  `pr-draft.md` has the note. The Rust fix uses `std::time::Instant` and has
+  no such limit.
 - **fanotify build bugs on `cpp`.** An earlier report asked whether to report or
   fix these. The user has not answered. In `configure.ac`, the fanotify
   `AC_ARG_ENABLE` sets `DOXYGEN_ENABLE` instead of `ENABLE_FANOTIFY`. In
