@@ -1,6 +1,6 @@
 #!/bin/sh
 
-test_description='Filtered events do not extend the --timeout period (issue #243)'
+test_description='Filtered and unrequested events do not extend the --timeout period (issue #243)'
 
 . ./fanotify-common.sh
 . ./sharness.sh
@@ -16,6 +16,11 @@ grace_secs=5
 # Timeout of the stream scenario. It is longer than the one second between
 # delivered events, so a loaded machine can be late by almost two seconds.
 stream_timeout_secs=3
+# Seconds before the appropriate event of the "late" scenarios. The timeout of
+# these scenarios is $stream_timeout_secs. The late event is at least one
+# whole second before the timeout would fire without it, so the run time shows
+# whether the event restarted the timeout.
+late_secs=2
 
 # Stop the background processes that create events, if any.
 stop_helpers() {
@@ -72,16 +77,40 @@ setup_ok() {
     return 0
 }
 
-# Rename a file over the name "noise" in the given directory. Each rename makes
-# one moved_to event. The mode "slow" pauses one second between renames. The
-# mode "tight" renames without a pause.
+# Make events in the given directory until stopped. The mode decides which.
+# - slow: Rename a file over the name "noise", then pause one second. Each
+#   rename makes one moved_to event.
+# - tight: Rename a file over the name "noise" without a pause.
+# - creates: Create a new empty file every half second. A new file makes a
+#   create event and no modify event.
+# - dirs: Create a new directory every second. A new directory makes a create
+#   event.
 start_noise() {
     (
         trap 'kill "$sleep_pid" 2>/dev/null; exit 0' TERM
+        n=0
         while :; do
-            echo x >"$1/noise.tmp" && mv -f "$1/noise.tmp" "$1/noise"
-            if [ "$2" = slow ]; then
-                sleep 1 &
+            n=$((n + 1))
+            pause=
+            case $2 in
+            slow)
+                echo x >"$1/noise.tmp" && mv -f "$1/noise.tmp" "$1/noise"
+                pause=1
+                ;;
+            tight)
+                echo x >"$1/noise.tmp" && mv -f "$1/noise.tmp" "$1/noise"
+                ;;
+            creates)
+                : >"$1/file$n"
+                pause=0.5
+                ;;
+            dirs)
+                mkdir "$1/dir$n"
+                pause=1
+                ;;
+            esac
+            if [ -n "$pause" ]; then
+                sleep "$pause" &
                 sleep_pid=$!
                 wait "$sleep_pid"
             fi
@@ -103,6 +132,32 @@ stream_events() {
         sleep 1
         deliver_event "$1"
     done
+}
+
+# Create a new empty file once a second, three times. Each file makes a create
+# event.
+stream_creates() {
+    for i in 1 2 3; do
+        sleep 1
+        : >"$1/created$i"
+    done
+}
+
+# Wait $2 seconds, then append to the file "target". The first append also
+# creates the file, which makes a create event. Each append makes a modify
+# event.
+late_modify() {
+    sleep "$2"
+    echo x >>"$1/target"
+}
+
+# Wait one second, then create the directory "sub". Wait another second, then
+# write a new file in it. The write makes a create and a modify event in "sub".
+late_subdir() {
+    sleep 1
+    mkdir "$1/sub"
+    sleep 1
+    echo x >"$1/sub/file"
 }
 
 # Run a command for at most $2 seconds. Write these files, named after $1:
@@ -145,9 +200,10 @@ bounded() {
     echo $(($(cat "$b_name.end") - b_start)) >"$b_name.secs"
 }
 
-# Run one scenario. Arguments: a name, the noise mode (none, slow or tight),
-# the delivered events (none, once or stream), the kill limit in seconds, and
-# the command. The command gets the watched directory as its last argument.
+# Run one scenario. Arguments: a name, the noise mode (none, slow, tight,
+# creates or dirs), the delivered events (none, once, stream, creates, late,
+# late_blind or subdir), the kill limit in seconds, and the command. The
+# command gets the watched directory as its last argument.
 run_case() {
     c_name=$1
     c_noise=$2
@@ -172,8 +228,14 @@ run_case() {
     c_bounded=$!
     # Start the delivered events only after the program has set up its watches.
     # The poll is bounded, so a broken build cannot hang the test.
+    # The mode "late_blind" is for a program that runs with -qq and reports
+    # nothing. It doesn't poll, and the pause before its event is the margin.
     if [ "$c_deliver" != none ]; then
-        if poll 100 watching "$c_name"; then
+        c_ready=watching
+        if [ "$c_deliver" = late_blind ]; then
+            c_ready=true
+        fi
+        if poll 100 $c_ready "$c_name"; then
             case $c_deliver in
             once)
                 (sleep 1; deliver_event "$c_dir") &
@@ -181,6 +243,18 @@ run_case() {
                 ;;
             stream)
                 stream_events "$c_dir" &
+                DELIVER_PID=$!
+                ;;
+            creates)
+                stream_creates "$c_dir" &
+                DELIVER_PID=$!
+                ;;
+            late | late_blind)
+                late_modify "$c_dir" "$late_secs" &
+                DELIVER_PID=$!
+                ;;
+            subdir)
+                late_subdir "$c_dir" &
                 DELIVER_PID=$!
                 ;;
             esac
@@ -246,6 +320,13 @@ limit_idle=$((timeout_secs + grace_secs))
 min_idle=$((timeout_secs - 1))
 limit_stream=$((3 + stream_timeout_secs + grace_secs))
 min_stream=$((3 + stream_timeout_secs - 1))
+limit_late=$((late_secs + stream_timeout_secs + grace_secs))
+min_late=$((late_secs + stream_timeout_secs - 1))
+# Options of the runs with --monitor and --recursive. Only modify events are
+# requested, so create events are unrequested. The loud variant omits -q, so
+# that the program reports "Watches established." on standard error.
+rec_quiet="-q -m -r -e modify"
+rec_loud="-m -r -e modify"
 
 test_expect_success 'run the scenarios in parallel' '
     spawn run_case include slow none $limit_idle \
@@ -278,11 +359,32 @@ test_expect_success 'run the scenarios in parallel' '
             ../../src/fsnotifywait --fanotify $common \
             --timeout $timeout_secs
     fi
+    spawn run_case rec_modify creates none $limit_idle \
+        $iw $rec_quiet --timeout $timeout_secs
+    spawn run_case rec_include dirs none $limit_idle \
+        $iw -q -m -r --timeout $timeout_secs --include "index\$"
+    spawn run_case rec_zero creates none $limit_idle \
+        $iw $rec_quiet --timeout 0
+    spawn run_case rec_no_timeout creates none $limit_idle \
+        $iw $rec_quiet
+    if fanotify_supported -m -r; then
+        spawn run_case fan_rec_modify creates none $limit_idle \
+            ../../src/fsnotifywait --fanotify $rec_quiet \
+            --timeout $timeout_secs
+    fi
     wait &&
     setup_ok
 '
 
 test_expect_success 'run the scenarios that need a quiet machine' '
+    spawn run_case rec_new_dir none subdir $limit_late \
+        $iw $rec_loud --timeout $stream_timeout_secs
+    spawn run_case rec_restart creates late $limit_late \
+        $iw $rec_loud --timeout $stream_timeout_secs
+    spawn run_case rec_create none creates $limit_stream \
+        $iw -m -r -e create --timeout $stream_timeout_secs
+    spawn run_case rec_qq none late_blind $limit_late \
+        $iw -qq -m -r -e modify --timeout $stream_timeout_secs
     spawn run_case tight tight none $limit_idle \
         $iw $common --timeout $timeout_secs --include "index\$"
     spawn run_case monitor_stream none stream $limit_stream \
@@ -340,6 +442,50 @@ test_expect_success '--timeout 0 waits despite filtered events' '
 test_expect_success 'No --timeout waits despite filtered events' '
     still_waiting no_timeout
 '
+
+test_expect_success '-m -r -e modify: unrequested events do not extend the timeout (R19)' '
+    timed_out rec_modify $min_idle &&
+    [ ! -s rec_modify.out ]
+'
+
+test_expect_success '-m -r: an appropriate event in a new directory is printed and restarts the timeout (R20)' '
+    timed_out rec_new_dir $min_late &&
+    [ "$(grep -c " file$" rec_new_dir.out)" = 1 ]
+'
+
+test_expect_success '-m -r: an appropriate event restarts the timeout and later unrequested events do not extend it (R21)' '
+    timed_out rec_restart $min_late &&
+    [ "$(grep -c " target$" rec_restart.out)" = 1 ] &&
+    ! grep -q CREATE rec_restart.out
+'
+
+test_expect_success '-m -r -e create: created files are appropriate and keep the program running (R22)' '
+    timed_out rec_create $min_stream &&
+    [ "$(grep -c " created[0-9]$" rec_create.out)" = 3 ]
+'
+
+test_expect_success '-m -r -qq: an appropriate event restarts the timeout (R23)' '
+    timed_out rec_qq $min_late &&
+    [ ! -s rec_qq.out ]
+'
+
+test_expect_success '-m -r --include: new directories rejected by the filter do not extend the timeout (R24)' '
+    timed_out rec_include $min_idle
+'
+
+test_expect_success '-m -r --timeout 0 waits despite unrequested events (R25)' '
+    still_waiting rec_zero
+'
+
+test_expect_success '-m -r without --timeout waits despite unrequested events (R25)' '
+    still_waiting rec_no_timeout
+'
+
+if fanotify_supported -m -r; then
+    test_expect_success 'fanotify: -m -r -e modify: unrequested events do not extend the timeout (R19)' '
+        timed_out fan_rec_modify $min_idle
+    '
+fi
 
 if fanotify_supported; then
     test_expect_success 'fanotify: filtered events do not extend the timeout' '
