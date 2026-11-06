@@ -11,7 +11,26 @@ two PRs read as if one author wrote them. Neither branch has changed yet. Items
 marked **Decision** need the user.
 
 All measurements below ran in the branches' `debian:bookworm-slim` images on
-2026-11-04. The probe scripts are not committed.
+2026-11-04, unless a section gives another date. The probe scripts are not
+committed.
+
+## Work plan for this branch
+
+The user decided on 2026-11-05 to make the alignment changes on this branch
+first. The Rust branch follows later. Each unit ends in a commit.
+
+1. Merged reproduction script. Done, see section 2.
+2. Merged spec. Use "appropriate event", one tolerance and the decided scope.
+   See section 3.
+3. Regression test (`test-writer`). Use the Rust structure and add the C++ cases
+   it lacks. Add the six Rust C API cases to `test.cpp`. See section 4.
+4. Library documentation and code comments (`implementer`). Use the shared
+   wording and the term "filtered events". Rewrap the comment that
+   `clang-format` flags. See sections 5 and 8.
+5. `code-critic` review of the whole fix and test, including 9623101 and
+   cc39667. Handle its findings.
+6. PR draft. Apply section 6, fold in the `-m -r` scope and the new
+   measurements, and retire `issue-recursive-monitor-timeout.md`.
 
 ## 1. Scope: unrequested events with `-m -r`
 
@@ -39,8 +58,8 @@ The `cpp` result comes from the issue draft. The other three are new.
 
 **Resolved 2026-11-04:** The user chose to port the Rust main-loop change.
 Commits a800fb4 (spec R19–R27), cc39667 (test) and 9623101 (fix in
-`src/inotifywait.cpp`) do this. The fixed build exits with status 2 after
-2.0 s in the case above.
+`src/inotifywait.cpp`) do this. The fixed build exits with status 2 after 2.0 s
+in the case above.
 
 TODO for the next session:
 
@@ -101,6 +120,23 @@ argument. Their parameters differ.
 **Proposal:** Use one script on both branches. Take the Rust exit codes, which
 separate a broken setup from the bug. Add the C++ matching-event case. Use the
 parameters in section 3. Quote the same numbers in both PR drafts.
+
+**Done 2026-11-05:** `pr-work/repro.sh` on this branch is now the merged script.
+It is the Rust script plus the C++ matching-event case. It uses the Rust
+parameters: `--timeout 3`, an 8 s guard, a 2 s late tolerance, no early bound,
+`date +%s%3N` and `-qq`. A failed matching-event case exits 1. Copy the script
+to the Rust branch unchanged.
+
+Results in the bookworm container:
+
+| Build | Exit | `--include` | `--exclude` | Appropriate event |
+| :- | :- | :- | :- | :- |
+| Bookworm package 3.22.6.0-4 | 1 | Killed at 8.0 s | Killed at 8.0 s | Exit 0 at 1.0 s |
+| `cpp` at 440ad5f | 1 | Killed at 8.0 s | Killed at 8.0 s | Exit 0 at 1.0 s |
+| This branch | 0 | Exit 2 at 3.0 s | Exit 2 at 3.0 s | Exit 0 at 1.0 s |
+
+The control case exited 2 at 3.0 s on all three builds. `pr-draft.md` still
+quotes the old script's numbers. Update it in the PR draft unit.
 
 ## 3. Specification
 
@@ -248,10 +284,10 @@ already matches.
   `-Wall -Wextra -Wmaybe-uninitialized -Wclobbered` at the fix and at 440ad5f.
   Both builds give the same 14 warnings, all outside the changed code. This
   closes an earlier `implementer` open question.
-- **`-lrt` on old glibc.** `clock_gettime()` needs `-lrt` before glibc 2.17.
-  The user decided on 2026-11-05 to leave the check out and note it in the PR.
-  `pr-draft.md` has the note. The Rust fix uses `std::time::Instant` and has
-  no such limit.
+- **`-lrt` on old glibc.** `clock_gettime()` needs `-lrt` before glibc 2.17. The
+  user decided on 2026-11-05 to leave the check out and note it in the PR.
+  `pr-draft.md` has the note. The Rust fix uses `std::time::Instant` and has no
+  such limit.
 - **fanotify build bugs on `cpp`.** An earlier report asked whether to report or
   fix these. The user has not answered. In `configure.ac`, the fanotify
   `AC_ARG_ENABLE` sets `DOXYGEN_ENABLE` instead of `ENABLE_FANOTIFY`. In
