@@ -126,7 +126,7 @@ parameters: `--timeout 3`, an 8 s guard, a 2 s late tolerance, no early bound,
 `date +%s%3N` and `-qq`. A failed matching-event case exits 1. Copy the script
 to the Rust branch unchanged.
 
-Results in the bookworm container. The final R13 change ran once per backend. The other runs came just before it.
+Results in the bookworm container:
 
 | Build | Exit | `--include` | `--exclude` | Appropriate event |
 | :- | :- | :- | :- | :- |
@@ -237,7 +237,8 @@ Differences from the Rust test to carry over to the Rust branch:
 - The fanotify suite runs the recursive cases only if
   `fanotify_supported -m -r` succeeds.
 
-Results in the bookworm container. The final R13 change ran once per backend. The other runs came just before it.
+Results in the bookworm container. The final R13 change ran once per backend.
+The other runs came just before it.
 
 | Build | Sharness test | C API test |
 | :- | :- | :- |
