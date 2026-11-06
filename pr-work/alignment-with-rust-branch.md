@@ -20,8 +20,7 @@ The user decided on 2026-11-05 to make the alignment changes on this branch
 first. The Rust branch follows later. Each unit ends in a commit.
 
 1. Merged reproduction script. Done, see section 2.
-2. Merged spec. Use "appropriate event", one tolerance and the decided scope.
-   See section 3.
+2. Merged spec. Done, see section 3.
 3. Regression test (`test-writer`). Use the Rust structure and add the C++ cases
    it lacks. Add the six Rust C API cases to `test.cpp`. See section 4.
 4. Library documentation and code comments (`implementer`). Use the shared
@@ -160,6 +159,18 @@ structure and terms differ.
   early bound only if a test checks it. Neither sharness test does.
 - Align the scope with the decision in section 1.
 - Keep the library sections apart where the libraries differ. See section 5.
+
+**Done 2026-11-05:** `pr-work/spec.md` on this branch is now the merged spec. It
+uses the Rust layout and terms, and it keeps the C++ requirements. It counts
+unrequested events as filtered events and gives them their own requirements, R9
+to R13. Its case table lists the sharness and C API cases for unit 3. Its
+"Branch notes" section holds the differences between the branches, so the file
+can go to the Rust branch unchanged. The Rust branch's `implementation-notes.md`
+measurements now also appear in the spec's measurement table.
+
+The new `cpp` row in that table, `--exclude -t 2` with continuous filtered
+events, was measured on 2026-11-05. The bookworm package and 440ad5f were both
+killed at 8.0 s. This branch exits with status 2 at 2.0 s.
 
 ## 4. Regression test
 
