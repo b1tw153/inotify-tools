@@ -322,6 +322,142 @@ void watch_limit() {
 	EXIT
 }
 
+static void write_close_file(char const* name) {
+	char fn[1024];
+	snprintf(fn, sizeof(fn), "%s/%s", TEST_DIR, name);
+	FILE* f = fopen(fn, "w");
+	if (f) {
+		fputs("x", f);
+		fclose(f);
+	}
+}
+
+static long elapsed_ms_since(struct timespec const* start) {
+	struct timespec now;
+	clock_gettime(CLOCK_MONOTONIC, &now);
+	return (long)(now.tv_sec - start->tv_sec) * 1000 +
+	       (now.tv_nsec - start->tv_nsec) / 1000000;
+}
+
+// Set up a watch on TEST_DIR for IN_CLOSE_WRITE, ignoring files named noise.
+#define SETUP_NOISE_FILTER                                                  \
+	do {                                                                \
+		verify((0 == mkdir(TEST_DIR, 0700)) || (EEXIST == errno));  \
+		verify(inotifytools_initialize());                          \
+		verify(inotifytools_watch_file(TEST_DIR, IN_CLOSE_WRITE));  \
+		verify(inotifytools_ignore_events_by_regex("noise", 0));    \
+	} while (0)
+
+// A queued passing event is returned by a zero-timeout call, even
+// when a filtered event is queued ahead of it.
+void next_events_zero_timeout_passing_after_filtered() {
+	ENTER
+	SETUP_NOISE_FILTER;
+	write_close_file("noise");
+	write_close_file("match");
+
+	struct inotify_event* e = inotifytools_next_events(0, 1);
+	verify2(e != NULL, "zero timeout must return the queued match event");
+	verify2(e->len > 0 && !strcmp(e->name, "match"), e->name);
+
+	inotifytools_ignore_events_by_regex(NULL, 0);
+	EXIT
+}
+
+// A filtered event queued between two passing events does not hide the
+// second one from a second zero-timeout call.
+void next_events_zero_timeout_consecutive_calls() {
+	ENTER
+	SETUP_NOISE_FILTER;
+	write_close_file("match");
+	write_close_file("noise");
+	write_close_file("match2");
+
+	struct inotify_event* e = inotifytools_next_events(0, 1);
+	verify2(e != NULL, "first call must return match");
+	verify2(e->len > 0 && !strcmp(e->name, "match"), e->name);
+
+	e = inotifytools_next_events(0, 1);
+	verify2(e != NULL, "second call must return match2");
+	verify2(e->len > 0 && !strcmp(e->name, "match2"), e->name);
+
+	inotifytools_ignore_events_by_regex(NULL, 0);
+	EXIT
+}
+
+// A zero timeout with only filtered events queued returns NULL promptly.
+void next_events_zero_timeout_only_filtered() {
+	ENTER
+	SETUP_NOISE_FILTER;
+	write_close_file("noise");
+	write_close_file("noise");
+
+	struct timespec start;
+	clock_gettime(CLOCK_MONOTONIC, &start);
+	struct inotify_event* e = inotifytools_next_events(0, 1);
+	long ms = elapsed_ms_since(&start);
+	verify2(e == NULL, "only filtered events queued, expected NULL");
+	verify2(ms < 500, "zero timeout call did not return promptly");
+
+	inotifytools_ignore_events_by_regex(NULL, 0);
+	EXIT
+}
+
+// A zero timeout with nothing queued returns NULL promptly.
+void next_events_zero_timeout_nothing_queued() {
+	ENTER
+	SETUP_NOISE_FILTER;
+
+	struct timespec start;
+	clock_gettime(CLOCK_MONOTONIC, &start);
+	struct inotify_event* e = inotifytools_next_events(0, 1);
+	long ms = elapsed_ms_since(&start);
+	verify2(e == NULL, "nothing queued, expected NULL");
+	verify2(ms < 500, "zero timeout call did not return promptly");
+
+	inotifytools_ignore_events_by_regex(NULL, 0);
+	EXIT
+}
+
+// A timeout of 1 with only filtered events queued returns NULL after
+// one to three seconds.
+void next_events_timeout_only_filtered() {
+	ENTER
+	SETUP_NOISE_FILTER;
+	write_close_file("noise");
+	write_close_file("noise");
+
+	struct timespec start;
+	clock_gettime(CLOCK_MONOTONIC, &start);
+	struct inotify_event* e = inotifytools_next_events(1, 1);
+	long ms = elapsed_ms_since(&start);
+	verify2(e == NULL, "only filtered events queued, expected NULL");
+	verify2(ms >= 1000, "timeout fired early");
+	verify2(ms <= 3000, "timeout fired late");
+
+	inotifytools_ignore_events_by_regex(NULL, 0);
+	EXIT
+}
+
+// Same as the test above, through inotifytools_next_event().
+void next_event_timeout_only_filtered() {
+	ENTER
+	SETUP_NOISE_FILTER;
+	write_close_file("noise");
+	write_close_file("noise");
+
+	struct timespec start;
+	clock_gettime(CLOCK_MONOTONIC, &start);
+	struct inotify_event* e = inotifytools_next_event(1);
+	long ms = elapsed_ms_since(&start);
+	verify2(e == NULL, "only filtered events queued, expected NULL");
+	verify2(ms >= 1000, "timeout fired early");
+	verify2(ms <= 3000, "timeout fired late");
+
+	inotifytools_ignore_events_by_regex(NULL, 0);
+	EXIT
+}
+
 void cleanup() {
 	compare(system("rm -rf " TEST_DIR), 0);
 	inotifytools_cleanup();
@@ -362,6 +498,19 @@ int main() {
 	cleanup();
 
 	tst_inotifytools_snprintf();
+	cleanup();
+
+	next_events_zero_timeout_passing_after_filtered();
+	cleanup();
+	next_events_zero_timeout_consecutive_calls();
+	cleanup();
+	next_events_zero_timeout_only_filtered();
+	cleanup();
+	next_events_zero_timeout_nothing_queued();
+	cleanup();
+	next_events_timeout_only_filtered();
+	cleanup();
+	next_event_timeout_only_filtered();
 	cleanup();
 
 	printf("Out of %d tests, %d succeeded and %d failed.\n",

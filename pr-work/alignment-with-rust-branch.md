@@ -22,7 +22,7 @@ first. The Rust branch follows later. Each unit ends in a commit.
 1. Merged reproduction script. Done, see section 2.
 2. Merged spec. Done, see section 3.
 3. Regression test (`test-writer`). Use the Rust structure and add the C++ cases
-   it lacks. Add the six Rust C API cases to `test.cpp`. See section 4.
+   it lacks. Add the six Rust C API cases to `test.cpp`. Done, see section 4.
 4. Library documentation and code comments (`implementer`). Use the shared
    wording and the term "filtered events". Rewrap the comment that
    `clang-format` flags. See sections 5 and 8.
@@ -126,7 +126,7 @@ parameters: `--timeout 3`, an 8 s guard, a 2 s late tolerance, no early bound,
 `date +%s%3N` and `-qq`. A failed matching-event case exits 1. Copy the script
 to the Rust branch unchanged.
 
-Results in the bookworm container:
+Results in the bookworm container. The final R13 change ran once per backend. The other runs came just before it.
 
 | Build | Exit | `--include` | `--exclude` | Appropriate event |
 | :- | :- | :- | :- | :- |
@@ -219,6 +219,44 @@ only change was the C++ two-argument form of
 also pass with the unfixed 440ad5f library. On `cpp` they guard the zero-timeout
 behavior, but they don't detect the bug. Add them to the C++ branch anyway, so
 both branches test the same C API contract.
+
+**Done 2026-11-06:** `test-writer` rewrote the test from the merged spec in the
+Rust structure. It has 18 cases per backend, one for each row of the spec's case
+table. The case names match the Rust test where the cases match. The six C API
+cases are in `test.cpp`.
+
+Differences from the Rust test to carry over to the Rust branch:
+
+- Cases that only wait for the exit use a 1 s timeout. Cases that restart the
+  period, and the new-directory case, use 2 s. A 1 s timeout with a new
+  directory every second didn't detect the bug.
+- Restart cases record the time of the appropriate event in the file `evt`.
+  They check the exit against that time.
+- Generators that make an event at a set time first wait for "Watches
+  established." on standard error. Those cases run without `--quiet`.
+- The fanotify suite runs the recursive cases only if
+  `fanotify_supported -m -r` succeeds.
+
+Results in the bookworm container. The final R13 change ran once per backend. The other runs came just before it.
+
+| Build | Sharness test | C API test |
+| :- | :- | :- |
+| 440ad5f, unfixed | 10 of 18 fail: 1–5, 7, 8, 13, 14, 15 | Pass |
+| 4f45c55, library fix only | 2 of 18 fail: 14, 15 (R9, R11) | Pass |
+| This branch | 18 of 18 pass, 5 runs | Pass |
+| This branch, root with fanotify | 36 of 36 pass, 4 runs | Not run |
+
+The full `t/` suite passes 30 of 30 on this branch, and `make check` passes. A
+run of the new test takes about 45 s per backend.
+
+Known timing limits of the test:
+
+- The `-qq` case can't wait for the watches, because the program prints
+  nothing. Its event comes 1 s after the program starts.
+- The new-directory case has about 0.5 s between steps. A loaded machine could
+  break that margin.
+- The tests don't cover R8 and L7, the monotonic clock. They also don't cover
+  L2, L3 for negative values, or L5.
 
 ## 5. Library documentation
 
