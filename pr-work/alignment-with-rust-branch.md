@@ -29,7 +29,8 @@ first. The Rust branch follows later. Each unit ends in a commit.
 5. `code-critic` review of the whole fix and test, including 9623101 and
    cc39667. Handle its findings. Done 2026-11-06, see "Code review" below.
 6. PR draft. Apply section 6, fold in the `-m -r` scope and the new
-   measurements, and retire `issue-recursive-monitor-timeout.md`.
+   measurements, and retire `issue-recursive-monitor-timeout.md`. Done
+   2026-11-06, see sections 6 and 7.
 
 ## 1. Scope: unrequested events with `-m -r`
 
@@ -60,15 +61,8 @@ Commits a800fb4 (spec R19–R27), cc39667 (test) and 9623101 (fix in
 `src/inotifywait.cpp`) do this. The fixed build exits with status 2 after 2.0 s
 in the case above.
 
-TODO for the next session:
-
-- Run `code-critic` on 9623101 and cc39667, and handle its findings.
-- Update `pr-draft.md`. Fold in the `-m -r` scope, the new cases and the
-  measurements.
-- Retire `issue-recursive-monitor-timeout.md`. The PR now covers that case.
-- Check the test gaps from `test-writer` in commit cc39667. The run times have
-  one-second resolution. The R23 case has no readiness signal. Fanotify covers
-  only R19.
+The code review, the PR draft update and the test rewrite in section 4 handled
+the follow-up items from this port.
 
 The options were:
 
@@ -230,12 +224,12 @@ Differences from the Rust test to carry over to the Rust branch:
 - Cases that only wait for the exit use a 1 s timeout. Cases that restart the
   period, and the new-directory case, use 2 s. A 1 s timeout with a new
   directory every second didn't detect the bug.
-- Restart cases record the time of the appropriate event in the file `evt`.
-  They check the exit against that time.
+- Restart cases record the time of the appropriate event in the file `evt`. They
+  check the exit against that time.
 - Generators that make an event at a set time first wait for "Watches
   established." on standard error. Those cases run without `--quiet`.
-- The fanotify suite runs the recursive cases only if
-  `fanotify_supported -m -r` succeeds.
+- The fanotify suite runs the recursive cases only if `fanotify_supported -m -r`
+  succeeds.
 
 Results in the bookworm container. The final R13 change ran once per backend.
 The other runs came just before it.
@@ -252,8 +246,8 @@ run of the new test takes about 45 s per backend.
 
 Known timing limits of the test:
 
-- The `-qq` case can't wait for the watches, because the program prints
-  nothing. Its event comes 1 s after the program starts.
+- The `-qq` case can't wait for the watches, because the program prints nothing.
+  Its event comes 1 s after the program starts.
 - The new-directory case has about 0.5 s between steps. A loaded machine could
   break that margin.
 - The tests don't cover R8 and L7, the monotonic clock. They also don't cover
@@ -291,8 +285,8 @@ after `inotifytools_ignore_events_by_regex()`. The Rust comments say "events
 skipped by the filters". Pick one. "Filtered events" matches the specs, the
 tests and the PR titles.
 
-**Done 2026-11-06:** `implementer` aligned the C++ documentation with spec D1
-to D3.
+**Done 2026-11-06:** `implementer` aligned the C++ documentation with spec D1 to
+D3.
 
 - Both `@note` blocks use the D1 text.
 - The zero-timeout `@param` text of `inotifytools_next_events()` states only
@@ -334,10 +328,33 @@ Carry these to the Rust branch:
   same bug and a matching fix.
 - Use the same results table columns, and the same build names.
 
+**Done 2026-11-06:** `pr-work/pr-draft.md` on this branch now follows the Rust
+draft's layout and wording. It has the same title, opener notes heading, body
+sections, squash advice and table columns. It folds in the `-m -r` scope, the
+merged reproduction's numbers and the results at 845fdc5. The `-lrt` note moved
+into "Changes". The note on building `fsnotifywait` is gone, by the user's
+decision of 2026-11-05.
+
+Carry these to the Rust draft:
+
+- Add the cross-reference sentence and a `CPP_PR_LINK` placeholder, with an
+  opener note to fill it in.
+- Name the build in the reproduction table with its version, "Debian bookworm
+  `inotify-tools` package 3.22.6.0-4".
+- Add the `-m -r` unrequested-event source to the body. The Rust draft names
+  only the hidden-directory events.
+- List the added test cases from the merged spec: the monitor stream, no filter,
+  no `--timeout` option and the four new `-m -r` cases.
+- Drop the opener note on the omitted `--timeout` gap. The merged test covers
+  it.
+- Mention that each call starts a new period and the `@return` sentence under
+  "Library API", once the Rust docs adopt them.
+
 ## 7. Issue drafts
 
-- **C++:** `issue-recursive-monitor-timeout.md`, for `-m -r`. Section 1 decides
-  its fate.
+- **C++:** `issue-recursive-monitor-timeout.md`, for `-m -r`. Removed
+  2026-11-06. The PR now covers that case, and its measurements are in the PR
+  draft.
 - **Rust:** `issue-recursive-include-exit0.md`, for `-r --include` exiting 0. It
   applies only to `master`, because `cpp` lacks commit 3e09f13.
 
@@ -367,9 +384,8 @@ already matches.
 
 ## Code review
 
-`code-critic` reviewed the diff from 440ad5f on 2026-11-06. It found no
-blocking issues. Commits 3d15b68, fdd236b, e795d4c and 845fdc5 handle its
-findings.
+`code-critic` reviewed the diff from 440ad5f on 2026-11-06. It found no blocking
+issues. Commits 3d15b68, fdd236b, e795d4c and 845fdc5 handle its findings.
 
 - The incomplete-event comment says the code jumps back to `setjmp` and keeps
   the deadline.
@@ -378,9 +394,9 @@ findings.
 - The `setjmp` comment says why `deadline` must not change after `setjmp`.
 - The `inotifywait.cpp` comment defines an appropriate event and names the
   events that `-m -r` adds.
-- The C API tests fail at setup when a file can't be opened, and they name
-  their time limits. The `.t` helpers use descriptive names and report a watch
-  that never starts.
+- The C API tests fail at setup when a file can't be opened, and they name their
+  time limits. The `.t` helpers use descriptive names and report a watch that
+  never starts.
 - `clang-format` reports no changes in the three changed C++ files.
 
 Results in the container at 845fdc5:
@@ -390,8 +406,8 @@ Results in the container at 845fdc5:
 | 440ad5f with the new tests | Fail | 20 of 36 fail | Pass |
 | 845fdc5 | Pass | 36 of 36 pass | Pass |
 
-The new `.t` test takes about 42 s for inotify alone and 84 s with fanotify.
-The rest of the `t/` suite passes as a normal user. As root,
+The new `.t` test takes about 42 s for inotify alone and 84 s with fanotify. The
+rest of the `t/` suite passes as a normal user. As root,
 `fsnotifywait-subtree.t` fails 1 of 3 cases at 440ad5f and at 845fdc5 alike.
 
 Deferred findings:
