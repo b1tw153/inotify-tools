@@ -399,14 +399,18 @@ int main(int argc, char** argv) {
 	char* moved_from = 0;
 
 	// The timeout period starts now. Only an appropriate event restarts it.
-	// With -m -r, the program adds events to follow new directories. Those
-	// events return from inotifytools_next_event() when the user didn't
-	// request them. They are filtered events and must not restart the
-	// period.
+	// An appropriate event is one that matches the events the user requested
+	// (orig_events). With -r, the program adds create, moved_to and
+	// moved_from to the watch mask to follow new directories. With -m,
+	// those events return from inotifytools_next_event() when the user
+	// didn't request them. They are filtered events and must not restart
+	// the period.
 	struct timespec deadline;
 	set_deadline(&deadline, timeout);
 
 	do {
+		// BLOCKING_TIMEOUT passes straight through and makes
+		// inotifytools_next_event() block.
 		long int seconds_left = BLOCKING_TIMEOUT;
 		if (timeout != BLOCKING_TIMEOUT) {
 			seconds_left = seconds_until(&deadline);

@@ -1415,21 +1415,23 @@ int inotifytools_watch_files(char const* filenames[], int events) {
  * Compute the time left until a deadline on CLOCK_MONOTONIC.
  *
  * @param deadline the deadline.
- * @param remaining receives the time left.
+ * @param remaining receives the time left.  The caller passes it to select().
  *
  * @return true if the deadline has passed, false otherwise.
  */
-static bool deadline_passed(const struct timespec* deadline,
-			    struct timeval* remaining) {
+static bool time_until_deadline(const struct timespec* deadline,
+				struct timeval* remaining) {
 	struct timespec now;
 	clock_gettime(CLOCK_MONOTONIC, &now);
-	remaining->tv_sec = deadline->tv_sec - now.tv_sec;
-	remaining->tv_usec = (deadline->tv_nsec - now.tv_nsec) / 1000;
-	if (remaining->tv_usec < 0) {
-		remaining->tv_sec--;
-		remaining->tv_usec += 1000000;
+	long sec = deadline->tv_sec - now.tv_sec;
+	long nsec = deadline->tv_nsec - now.tv_nsec;
+	if (nsec < 0) {
+		sec--;
+		nsec += 1000000000L;
 	}
-	return remaining->tv_sec < 0;
+	remaining->tv_sec = sec;
+	remaining->tv_usec = nsec / 1000;
+	return sec < 0;
 }
 
 /**
@@ -1446,9 +1448,9 @@ static bool deadline_passed(const struct timespec* deadline,
  *
  * @return pointer to an inotify event, or NULL if function timed out before
  *         an event occurred.  After a timeout, inotifytools_error() is 0.
- *         The event is located in static storage and it
- *         may be overwritten in subsequent calls; do not call free() on it,
- *         and make a copy if you want to keep it.
+ *         The event is located in static storage and it may be overwritten in
+ *         subsequent calls; do not call free() on it, and make a copy if you
+ *         want to keep it.
  *
  * @note Your program should call this function or
  *       inotifytools_next_events() frequently; between calls to this function,
@@ -1500,9 +1502,9 @@ struct inotify_event* inotifytools_next_event(long int timeout) {
  *
  * @return pointer to an inotify event, or NULL if function timed out before
  *         an event occurred or @a num_events < 1.  After a timeout,
- *         inotifytools_error() is 0.  The event is located in
- *         static storage and it may be overwritten in subsequent calls; do not
- *         call free() on it, and make a copy if you want to keep it.
+ *         inotifytools_error() is 0.  The event is located in static storage
+ *         and it may be overwritten in subsequent calls; do not call free() on
+ *         it, and make a copy if you want to keep it.
  *         When @a num_events is greater than 1, this will return a pointer to
  *         the first event only, and you MUST call this function again to
  *         get pointers to subsequent events; don't try to add to the pointer
@@ -1549,8 +1551,10 @@ struct inotify_event* inotifytools_next_events(long int timeout,
 	// The timeout period starts when this function is called.  Compute its
 	// end here, before setjmp, because filtered events jump back to setjmp
 	// and must not restart the period.  Do not modify deadline after
-	// setjmp.  Use a monotonic clock so that changing the system clock has
-	// no effect.
+	// setjmp.  A longjmp gives a non-volatile local that changed after
+	// setjmp an indeterminate value.  The variable read_timeout is declared
+	// after setjmp and is recomputed on every jump, so it is safe.  Use a
+	// monotonic clock so that changing the system clock has no effect.
 	struct timespec deadline = {0, 0};
 	if (timeout > 0) {
 		clock_gettime(CLOCK_MONOTONIC, &deadline);
@@ -1565,10 +1569,8 @@ struct inotify_event* inotifytools_next_events(long int timeout,
 	// Filtered events jump back to here.  Stop if the timeout period has
 	// ended.  Events not yet returned stay in the buffer for the next call.
 	struct timeval read_timeout = {0, 0};
-	if (timeout > 0) {
-		if (deadline_passed(&deadline, &read_timeout)) {
-			return NULL;
-		}
+	if (timeout > 0 && time_until_deadline(&deadline, &read_timeout)) {
+		return NULL;
 	}
 
 	// first_byte is index into event buffer
@@ -1579,10 +1581,11 @@ struct inotify_event* inotifytools_next_events(long int timeout,
 		    first_byte + sizeof(*ret) + ret->len > bytes) {
 			// oh... no.  this can't be happening.  An incomplete
 			// event. Copy what we currently have into first
-			// element, call self to read remainder. oh, and they
-			// BETTER NOT overlap. Boy I hope this code works. But I
-			// think this can never happen due to how inotify is
-			// written.
+			// element, then jump back to setjmp to read the
+			// remainder. The jump keeps the same deadline. oh, and
+			// they BETTER NOT overlap. Boy I hope this code works.
+			// But I think this can never happen due to how inotify
+			// is written.
 			niceassert((long)((char*)&event[0] +
 					  sizeof(struct inotify_event) +
 					  event[0].len) <= (long)ret,
