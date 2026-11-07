@@ -1457,8 +1457,10 @@ static bool deadline_passed(const struct timespec* deadline,
  *
  * @note If the function inotifytools_ignore_events_by_regex() has been called
  *       with a non-NULL parameter, this function will not return on events
- *       which match the regular expression passed to that function.  Such
- *       events do not restart the @a timeout period.  Each call to this
+ *       which match the regular expression passed to that function.  Those
+ *       events do not restart the @a timeout period.  The function returns
+ *       NULL once @a timeout seconds have passed since the call began, unless
+ *       an event that passes the filter is available first.  Each call to this
  *       function starts a new @a timeout period.
  */
 struct inotify_event* inotifytools_next_event(long int timeout) {
@@ -1479,6 +1481,9 @@ struct inotify_event* inotifytools_next_event(long int timeout) {
  *                If @a timeout is positive, the function will return NULL if
  *                no event occurs within @a timeout seconds.
  *                If @a timeout is zero, the function does not block.
+ *                It returns a queued event that passes the filter, even when
+ *                filtered events are queued ahead of it.
+ *                If only filtered events are queued, it returns NULL promptly.
  *                If @a timeout is negative, the function will block until an
  *                event occurs.
  *
@@ -1517,8 +1522,10 @@ struct inotify_event* inotifytools_next_event(long int timeout) {
  *
  * @note If the function inotifytools_ignore_events_by_regex() has been called
  *       with a non-NULL parameter, this function will not return on events
- *       which match the regular expression passed to that function.  Such
- *       events do not restart the @a timeout period.  Each call to this
+ *       which match the regular expression passed to that function.  Those
+ *       events do not restart the @a timeout period.  The function returns
+ *       NULL once @a timeout seconds have passed since the call began, unless
+ *       an event that passes the filter is available first.  Each call to this
  *       function starts a new @a timeout period.
  */
 struct inotify_event* inotifytools_next_events(long int timeout,
@@ -1540,9 +1547,10 @@ struct inotify_event* inotifytools_next_events(long int timeout,
 	static char match_name_string[MAX_STRLEN + 1];
 
 	// The timeout period starts when this function is called.  Compute its
-	// end here, before setjmp, because ignored events jump back to setjmp
-	// and must not restart the period.  Do not modify deadline after setjmp.
-	// Use a monotonic clock so that changing the system clock has no effect.
+	// end here, before setjmp, because filtered events jump back to setjmp
+	// and must not restart the period.  Do not modify deadline after
+	// setjmp.  Use a monotonic clock so that changing the system clock has
+	// no effect.
 	struct timespec deadline = {0, 0};
 	if (timeout > 0) {
 		clock_gettime(CLOCK_MONOTONIC, &deadline);
@@ -1554,7 +1562,7 @@ struct inotify_event* inotifytools_next_events(long int timeout,
 	pid_t event_pid = 0;
 	error = 0;
 
-	// Ignored events jump back to here.  Stop if the timeout period has
+	// Filtered events jump back to here.  Stop if the timeout period has
 	// ended.  Events not yet returned stay in the buffer for the next call.
 	struct timeval read_timeout = {0, 0};
 	if (timeout > 0) {

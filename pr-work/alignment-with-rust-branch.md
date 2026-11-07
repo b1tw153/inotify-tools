@@ -25,7 +25,7 @@ first. The Rust branch follows later. Each unit ends in a commit.
    it lacks. Add the six Rust C API cases to `test.cpp`. Done, see section 4.
 4. Library documentation and code comments (`implementer`). Use the shared
    wording and the term "filtered events". Rewrap the comment that
-   `clang-format` flags. See sections 5 and 8.
+   `clang-format` flags. See sections 5 and 8. Done, see section 5.
 5. `code-critic` review of the whole fix and test, including 9623101 and
    cc39667. Handle its findings.
 6. PR draft. Apply section 6, fold in the `-m -r` scope and the new
@@ -291,6 +291,27 @@ after `inotifytools_ignore_events_by_regex()`. The Rust comments say "events
 skipped by the filters". Pick one. "Filtered events" matches the specs, the
 tests and the PR titles.
 
+**Done 2026-11-06:** `implementer` aligned the C++ documentation with spec D1
+to D3.
+
+- Both `@note` blocks use the D1 text.
+- The zero-timeout `@param` text of `inotifytools_next_events()` states only
+  what L4 says and the C API tests check. It doesn't describe the read loop.
+- The fix's code comments in `inotifytools.cpp` and `src/inotifywait.cpp` say
+  "filtered events".
+- `clang-format` reports no changes in either file.
+
+The reproduction passes, `make check` passes, and the `t/` suite passes 30 of
+30, with all 18 cases of the new test.
+
+Carry these to the Rust branch:
+
+- Add "Each call to this function starts a new @a timeout period." to both
+  `@note` blocks.
+- Add the positive-value `@param` sentence and the `@return` sentence from D1.
+- Rename "events skipped by the filters" to "filtered events" in the Rust
+  comments.
+
 ## 6. PR drafts
 
 | Item | C++ | Rust |
@@ -329,7 +350,7 @@ already matches.
   comment in the fix at `libinotifytools/src/inotifytools.cpp` lines 1544–1545.
   The line "and must not restart the period. Do not modify deadline after
   setjmp." is longer than 80 columns with 8-column tabs. The unfixed file needs
-  no changes. Rewrap the comment before opening the PR.
+  no changes. Rewrap the comment before opening the PR. Done 2026-11-06.
 - **No new compiler warnings.** I built the library with
   `-Wall -Wextra -Wmaybe-uninitialized -Wclobbered` at the fix and at 440ad5f.
   Both builds give the same 14 warnings, all outside the changed code. This

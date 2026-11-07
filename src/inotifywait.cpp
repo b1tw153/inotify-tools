@@ -399,9 +399,10 @@ int main(int argc, char** argv) {
 	char* moved_from = 0;
 
 	// The timeout period starts now. Only an appropriate event restarts it.
-	// With -m -r, the program adds unrequested events to follow new
-	// directories. Those events return from inotifytools_next_event(). They
-	// must not restart the period.
+	// With -m -r, the program adds events to follow new directories. Those
+	// events return from inotifytools_next_event() when the user didn't
+	// request them. They are filtered events and must not restart the
+	// period.
 	struct timespec deadline;
 	set_deadline(&deadline, timeout);
 
