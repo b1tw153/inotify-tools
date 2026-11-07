@@ -27,7 +27,7 @@ first. The Rust branch follows later. Each unit ends in a commit.
    wording and the term "filtered events". Rewrap the comment that
    `clang-format` flags. See sections 5 and 8. Done, see section 5.
 5. `code-critic` review of the whole fix and test, including 9623101 and
-   cc39667. Handle its findings.
+   cc39667. Handle its findings. Done 2026-11-06, see "Code review" below.
 6. PR draft. Apply section 6, fold in the `-m -r` scope and the new
    measurements, and retire `issue-recursive-monitor-timeout.md`.
 
@@ -364,3 +364,40 @@ already matches.
   `AC_ARG_ENABLE` sets `DOXYGEN_ENABLE` instead of `ENABLE_FANOTIFY`. In
   `src/Makefile.am`, `fsnotifywait_CPPFLAGS` replaces the include path in
   `AM_CPPFLAGS`.
+
+## Code review
+
+`code-critic` reviewed the diff from 440ad5f on 2026-11-06. It found no
+blocking issues. Commits 3d15b68, fdd236b, e795d4c and 845fdc5 handle its
+findings.
+
+- The incomplete-event comment says the code jumps back to `setjmp` and keeps
+  the deadline.
+- The helper `deadline_passed()` is now `time_until_deadline()`. It borrows in
+  nanoseconds before it converts to microseconds.
+- The `setjmp` comment says why `deadline` must not change after `setjmp`.
+- The `inotifywait.cpp` comment defines an appropriate event and names the
+  events that `-m -r` adds.
+- The C API tests fail at setup when a file can't be opened, and they name
+  their time limits. The `.t` helpers use descriptive names and report a watch
+  that never starts.
+- `clang-format` reports no changes in the three changed C++ files.
+
+Results in the container at 845fdc5:
+
+| Build | Reproduction | New `.t` test | C API test |
+| :- | :- | :- | :- |
+| 440ad5f with the new tests | Fail | 20 of 36 fail | Pass |
+| 845fdc5 | Pass | 36 of 36 pass | Pass |
+
+The new `.t` test takes about 42 s for inotify alone and 84 s with fanotify.
+The rest of the `t/` suite passes as a normal user. As root,
+`fsnotifywait-subtree.t` fails 1 of 3 cases at 440ad5f and at 845fdc5 alike.
+
+Deferred findings:
+
+- **Run time.** The reviewer asked whether 84 s fits the project's CI budget.
+  The PR draft should mention it so that maintainers can ask to trim cases.
+- **`-lrt` on old glibc.** Already noted in the PR draft.
+
+Carry to the Rust branch: nothing. The changes are specific to the C++ code.
