@@ -350,12 +350,12 @@ static long elapsed_ms_since(struct timespec const* start) {
 }
 
 // Set up a watch on TEST_DIR for IN_CLOSE_WRITE, ignoring files named noise.
-#define SETUP_NOISE_FILTER                                                  \
-	do {                                                                \
-		verify((0 == mkdir(TEST_DIR, 0700)) || (EEXIST == errno));  \
-		verify(inotifytools_initialize());                          \
-		verify(inotifytools_watch_file(TEST_DIR, IN_CLOSE_WRITE));  \
-		verify(inotifytools_ignore_events_by_regex("noise", 0));    \
+#define SETUP_NOISE_FILTER                                                 \
+	do {                                                               \
+		verify((0 == mkdir(TEST_DIR, 0700)) || (EEXIST == errno)); \
+		verify(inotifytools_initialize());                         \
+		verify(inotifytools_watch_file(TEST_DIR, IN_CLOSE_WRITE)); \
+		verify(inotifytools_ignore_events_by_regex("noise", 0));   \
 	} while (0)
 
 // A queued passing event is returned by a zero-timeout call, even
