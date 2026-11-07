@@ -326,11 +326,21 @@ static void write_close_file(char const* name) {
 	char fn[1024];
 	snprintf(fn, sizeof(fn), "%s/%s", TEST_DIR, name);
 	FILE* f = fopen(fn, "w");
-	if (f) {
-		fputs("x", f);
-		fclose(f);
+	if (!f) {
+		fprintf(stderr, "setup failed, cannot open %s: %s\n", fn,
+			strerror(errno));
+		exit(EXIT_FAILURE);
 	}
+	fputs("x", f);
+	fclose(f);
 }
+
+// A zero timeout call must return in less than this many milliseconds.
+static const long PROMPT_MS = 500;
+// A one second timeout must not fire before this many milliseconds.
+static const long TIMEOUT_MIN_MS = 1000;
+// A one second timeout must fire before this many milliseconds.
+static const long TIMEOUT_MAX_MS = 3000;
 
 static long elapsed_ms_since(struct timespec const* start) {
 	struct timespec now;
@@ -359,8 +369,6 @@ void next_events_zero_timeout_passing_after_filtered() {
 	struct inotify_event* e = inotifytools_next_events(0, 1);
 	verify2(e != NULL, "zero timeout must return the queued match event");
 	verify2(e->len > 0 && !strcmp(e->name, "match"), e->name);
-
-	inotifytools_ignore_events_by_regex(NULL, 0);
 	EXIT
 }
 
@@ -380,8 +388,6 @@ void next_events_zero_timeout_consecutive_calls() {
 	e = inotifytools_next_events(0, 1);
 	verify2(e != NULL, "second call must return match2");
 	verify2(e->len > 0 && !strcmp(e->name, "match2"), e->name);
-
-	inotifytools_ignore_events_by_regex(NULL, 0);
 	EXIT
 }
 
@@ -397,9 +403,7 @@ void next_events_zero_timeout_only_filtered() {
 	struct inotify_event* e = inotifytools_next_events(0, 1);
 	long ms = elapsed_ms_since(&start);
 	verify2(e == NULL, "only filtered events queued, expected NULL");
-	verify2(ms < 500, "zero timeout call did not return promptly");
-
-	inotifytools_ignore_events_by_regex(NULL, 0);
+	verify2(ms < PROMPT_MS, "zero timeout call did not return promptly");
 	EXIT
 }
 
@@ -413,9 +417,7 @@ void next_events_zero_timeout_nothing_queued() {
 	struct inotify_event* e = inotifytools_next_events(0, 1);
 	long ms = elapsed_ms_since(&start);
 	verify2(e == NULL, "nothing queued, expected NULL");
-	verify2(ms < 500, "zero timeout call did not return promptly");
-
-	inotifytools_ignore_events_by_regex(NULL, 0);
+	verify2(ms < PROMPT_MS, "zero timeout call did not return promptly");
 	EXIT
 }
 
@@ -432,10 +434,8 @@ void next_events_timeout_only_filtered() {
 	struct inotify_event* e = inotifytools_next_events(1, 1);
 	long ms = elapsed_ms_since(&start);
 	verify2(e == NULL, "only filtered events queued, expected NULL");
-	verify2(ms >= 1000, "timeout fired early");
-	verify2(ms <= 3000, "timeout fired late");
-
-	inotifytools_ignore_events_by_regex(NULL, 0);
+	verify2(ms >= TIMEOUT_MIN_MS, "timeout fired early");
+	verify2(ms <= TIMEOUT_MAX_MS, "timeout fired late");
 	EXIT
 }
 
@@ -451,10 +451,8 @@ void next_event_timeout_only_filtered() {
 	struct inotify_event* e = inotifytools_next_event(1);
 	long ms = elapsed_ms_since(&start);
 	verify2(e == NULL, "only filtered events queued, expected NULL");
-	verify2(ms >= 1000, "timeout fired early");
-	verify2(ms <= 3000, "timeout fired late");
-
-	inotifytools_ignore_events_by_regex(NULL, 0);
+	verify2(ms >= TIMEOUT_MIN_MS, "timeout fired early");
+	verify2(ms <= TIMEOUT_MAX_MS, "timeout fired late");
 	EXIT
 }
 

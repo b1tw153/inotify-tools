@@ -47,16 +47,22 @@ noise_stop() {
         wait "$noise_pid" 2>/dev/null
         noise_pid=
     fi
+    # The generator output is discarded, so it reports problems in diag.
+    if test -f diag; then
+        cat diag
+        rm -f diag
+    fi
 }
 
 # Wait until the program under test reports that it is watching, for at most
 # 5 seconds. The program must run without --quiet, because it reports on
 # standard error to the file err.
 await_watch() {
-    w_n=0
+    tries=0
     until grep -q 'Watches established' err 2>/dev/null; do
-        w_n=$((w_n + 1))
-        if [ "$w_n" -ge 50 ]; then
+        tries=$((tries + 1))
+        if [ "$tries" -ge 50 ]; then
+            echo "# watch not established" >>diag
             return 0
         fi
         sleep 0.1
@@ -91,16 +97,16 @@ gen_none() {
 gen_match() {
     mode=$1
     await_watch
-    n=0
+    step=0
     while [ ! -e stop ]; do
         touch watched/noise
-        if [ "$n" -eq 5 ]; then
+        if [ "$step" -eq 5 ]; then
             now_ms >evt
         fi
-        if [ "$n" -eq 5 ] || { [ "$mode" = repeat ] && [ "$n" -gt 5 ]; }; then
+        if [ "$step" -eq 5 ] || { [ "$mode" = repeat ] && [ "$step" -gt 5 ]; }; then
             touch watched/match
         fi
-        n=$((n + 1))
+        step=$((step + 1))
         sleep 0.2
     done
 }
@@ -118,10 +124,10 @@ gen_stream() {
 
 # A new directory every second.
 gen_dirs() {
-    n=0
+    step=0
     while [ ! -e stop ]; do
-        mkdir watched/d$n
-        n=$((n + 1))
+        mkdir watched/d$step
+        step=$((step + 1))
         sleep 1
     done
 }
@@ -129,10 +135,10 @@ gen_dirs() {
 # A new empty file every half second. A new file makes a create event and no
 # modify event.
 gen_creates() {
-    n=0
+    step=0
     while [ ! -e stop ]; do
-        : >watched/file$n
-        n=$((n + 1))
+        : >watched/file$step
+        step=$((step + 1))
         sleep 0.5
     done
 }
@@ -142,17 +148,17 @@ gen_creates() {
 # it, and record the time in the file evt.
 gen_newdir() {
     await_watch
-    n=0
+    step=0
     while [ ! -e stop ]; do
-        : >watched/file$n
-        case $n in
+        : >watched/file$step
+        case $step in
         1) mkdir watched/sub ;;
         2)
             now_ms >evt
             echo x >watched/sub/file
             ;;
         esac
-        n=$((n + 1))
+        step=$((step + 1))
         sleep 0.5
     done
 }
@@ -166,56 +172,56 @@ gen_blind_modify() {
     echo x >>watched/target
 }
 
-# Run a command under a guard. Sets rc, t1 and elapsed_ms.
+# Run a command under a guard. Sets exit_status, end_ms and elapsed_ms.
 # Arguments: guard in seconds, then the command.
 run_guarded() {
-    g=$1
+    guard_s=$1
     shift
-    t0=$(now_ms)
-    timeout "$g" "$@" >out 2>err
-    rc=$?
-    t1=$(now_ms)
-    elapsed_ms=$((t1 - t0))
-    echo "# rc=$rc elapsed_ms=$elapsed_ms"
+    start_ms=$(now_ms)
+    timeout "$guard_s" "$@" >out 2>err
+    exit_status=$?
+    end_ms=$(now_ms)
+    elapsed_ms=$((end_ms - start_ms))
+    echo "# exit_status=$exit_status elapsed_ms=$elapsed_ms"
 }
 
 # Run a command under a guard of 4 seconds more than the timeout period.
 # Arguments: timeout period in seconds, then the command.
 run_timed() {
-    p=$1
+    period_s=$1
     shift
-    run_guarded $((p + 4)) "$@"
+    run_guarded $((period_s + 4)) "$@"
 }
 
 # Check for status 2, no earlier than the period and no later than the period
 # plus the tolerance.
 check_exit2_on_time() {
-    p=$1
-    test "$rc" -eq 2 || { echo "# expected exit 2, got $rc"; return 1; }
-    test "$elapsed_ms" -ge $((p * 1000)) ||
+    period_s=$1
+    test "$exit_status" -eq 2 || { echo "# expected exit 2, got $exit_status"; return 1; }
+    test "$elapsed_ms" -ge $((period_s * 1000)) ||
         { echo "# exited early"; return 1; }
-    test "$elapsed_ms" -le $((p * 1000 + late_ms)) ||
+    test "$elapsed_ms" -le $((period_s * 1000 + late_ms)) ||
         { echo "# exited late"; return 1; }
 }
 
 # Check for status 2, no earlier than the period after the event whose time is
 # in the file evt, and no later than that plus the tolerance.
 check_exit2_after_event() {
-    p=$1
-    test "$rc" -eq 2 || { echo "# expected exit 2, got $rc"; return 1; }
+    period_s=$1
+    test "$exit_status" -eq 2 || { echo "# expected exit 2, got $exit_status"; return 1; }
     test -s evt || { echo "# no event was made"; return 1; }
-    since_ms=$((t1 - $(cat evt)))
+    since_ms=$((end_ms - $(cat evt)))
     echo "# since_event_ms=$since_ms"
-    test "$since_ms" -ge $((p * 1000)) ||
+    test "$since_ms" -ge $((period_s * 1000)) ||
         { echo "# exited early"; return 1; }
-    test "$since_ms" -le $((p * 1000 + late_ms)) ||
+    test "$since_ms" -le $((period_s * 1000 + late_ms)) ||
         { echo "# exited late"; return 1; }
 }
 
 # Create a fresh watched directory and start a generator.
 # Arguments: the generator command, then its arguments.
 setup_watch() {
-    rm -rf watched stop evt out err &&
+    rm -rf watched stop evt out err diag &&
         mkdir watched &&
         noise_start "$@"
 }
@@ -224,13 +230,13 @@ setup_watch() {
 # Arguments: generator, period, then the tool options before the path.
 case_exit2() {
     gen=$1
-    p=$2
+    period_s=$2
     shift 2
     setup_watch "$gen"
     # $backend is unquoted on purpose, see run_suite.
-    run_timed "$p" ../../src/$backend --quiet --timeout "$p" "$@" watched
+    run_timed "$period_s" ../../src/$backend --quiet --timeout "$period_s" "$@" watched
     noise_stop
-    check_exit2_on_time "$p"
+    check_exit2_on_time "$period_s"
 }
 
 # Run one watch against a generator and require that it is still running when
@@ -239,12 +245,12 @@ case_exit2() {
 # path.
 case_running() {
     gen=$1
-    g=$2
+    guard_s=$2
     shift 2
     setup_watch "$gen"
-    run_guarded "$g" ../../src/$backend "$@" watched
+    run_guarded "$guard_s" ../../src/$backend "$@" watched
     noise_stop
-    test "$rc" -eq 124
+    test "$exit_status" -eq 124
 }
 
 # Run one watch against a generator that makes a matching event, and require
@@ -255,12 +261,12 @@ case_running() {
 case_restart() {
     gen=$1
     genarg=$2
-    p=$3
+    period_s=$3
     shift 3
     setup_watch "$gen" $genarg
-    run_timed "$p" ../../src/$backend --timeout "$p" "$@" watched
+    run_timed "$period_s" ../../src/$backend --timeout "$period_s" "$@" watched
     noise_stop
-    check_exit2_after_event "$p"
+    check_exit2_after_event "$period_s"
 }
 
 # Arguments: a label, whether the backend supports --recursive (yes or no),
@@ -308,7 +314,7 @@ run_suite() {
         setup_watch gen_match repeat &&
         run_timed $rperiod ../../src/$backend --timeout $rperiod --include match watched &&
         noise_stop &&
-        test "$rc" -eq 0 &&
+        test "$exit_status" -eq 0 &&
         test "$elapsed_ms" -lt $((rperiod * 1000)) &&
         grep match out
     '
